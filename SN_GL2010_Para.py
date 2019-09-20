@@ -11,3 +11,5 @@ mat = 1
 t = 130
 # Thickness correction  +++ The thickness is not considered here
 sign_tc = 0
+# Surface roughness 
+Rz = 125
