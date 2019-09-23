@@ -1,14 +1,23 @@
+'''
+@Description:  SN curve calculation and modification according to GL2010.
+@Author: Louis.Wang
+@version: v1
+@Date: 2019-09-23 13:55:31
+@LastEditors: Louis.Wang
+@LastEditTime: 2019-09-23 16:34:23
+'''
+
 
 class SN_curve():
-
     def __init__(self,mat = 1,t = 130,j = 3, gamma_m = 1.265,*args, **kwargs):
         super().__init__(*args, **kwargs) 
-        """
-        Basic paramater for SN curve calculation
-        Arguments:
-            mat: Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
-            t: Thickness of the material. /mm
-        """
+        '''
+        @description: Basic paramater for SN curve calculation
+        @para: mat: {int} Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
+        @para: t: {float} Thickness of the material. /mm
+        @return: 
+        '''
+
         # Strength of tension. /MPa
         self.Rm = 360        
         # strength of yield. /MPa
@@ -36,9 +45,11 @@ class SN_curve():
 
 
     def Cal(self):
-        """
-        Main function for SN-curve paramater calculation.
-        """
+        '''
+        @description: Main function for SN-curve paramater calculation.
+        @param
+        @return: 
+        '''
         from math import log10, sqrt
 
         self.Rb = self.Rm*1.06
@@ -107,6 +118,11 @@ class SN_curve():
         self.sigm_e = (self.N_2/self.N_e)**(1/self.m2)*self.sigm_2
 
     def sn_plot(self):
+        '''
+        @description: figure plot of the initial SN surve.
+        @param 
+        @return: 
+        '''
         import matplotlib.pyplot as plt
         x = [0,self.N_1,self.N_D,self.N_2,self.N_e]
         y = [self.sigm_1,self.sigm_1,self.sigm_d,self.sigm_2,self.sigm_e]
@@ -121,9 +137,7 @@ class SN_curve():
         plt.annotate(s = 'm1=%.2f' %self.m1,xy=(10**4,150))
         plt.annotate(s = 'm2=%.2f' %self.m2,xy=(10**7,40))
         plt.show()
-        return
-
-    
+        return    
 
 if __name__ == "__main__":
     a = SN_curve(mat=1,t=130)
