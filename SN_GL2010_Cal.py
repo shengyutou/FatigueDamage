@@ -1,3 +1,4 @@
+
 class SN_curve():
 
     def __init__(self,mat = 1,t = 130,j = 3, gamma_m = 1.265,*args, **kwargs):
@@ -98,19 +99,27 @@ class SN_curve():
         # upper limit of fatigue life line
         self.sigm_1 = self.Rp*(1-self.R)/self.gamma_M
         # number of load cycles at upper fatigue limit
+        # N_1*sigm_1**m = N_2*sigm_2**m
         self.N_1 = self.N_D*(2*self.sigm_d/self.sigm_1)**self.m1
-        self.sigm_2 = (self.N_D/5/10**6)**(1/self.m1)*self.sigm_d
-        self.sigm_e = (5/1000)**(1/self.m2)*self.sigm_2
+        self.N_2 = 5*10**6
+        self.sigm_2 = (self.N_D/self.N_2)**(1/self.m2)*self.sigm_d
+        self.N_e = 10**9
+        self.sigm_e = (self.N_2/self.N_e)**(1/self.m2)*self.sigm_2
 
     def sn_plot(self):
         import matplotlib.pyplot as plt
-        x = [0,self.N_1,self.N_D,5*10**6,10**9]
+        x = [0,self.N_1,self.N_D,self.N_2,self.N_e]
         y = [self.sigm_1,self.sigm_1,self.sigm_d,self.sigm_2,self.sigm_e]
         plt.loglog(x,y,lw=2,marker='*')
         plt.xlabel('N')
         plt.ylabel('Amplitude MPa')
-        plt.xlim(0,10**9)
+        plt.xlim(1,10**9)
         plt.yticks([10,100,1000])
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_1,self.sigm_1), xy=(self.N_1,self.sigm_1))
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_D,self.sigm_d), xy=(self.N_D,self.sigm_d))
+        plt.annotate(s = '(%.1e,%.2f)' %(5*10**6,self.sigm_2), xy=(5*10**6,2*self.sigm_2-self.sigm_d))
+        plt.annotate(s = 'm1=%.2f' %self.m1,xy=(10**4,150))
+        plt.annotate(s = 'm2=%.2f' %self.m2,xy=(10**7,40))
         plt.show()
         return
 
