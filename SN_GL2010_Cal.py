@@ -4,7 +4,6 @@ class SN_curve():
         super().__init__(*args, **kwargs) 
         """
         Basic paramater for SN curve calculation
-
         Arguments:
             mat: Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
             t: Thickness of the material. /mm
