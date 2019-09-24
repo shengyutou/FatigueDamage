@@ -4,17 +4,18 @@
 @version: v1
 @Date: 2019-09-23 13:55:31
 @LastEditors: Louis.Wang
-@LastEditTime: 2019-09-23 16:34:23
+@LastEditTime: 2019-09-24 10:18:03
 '''
-
 
 class SN_curve():
     def __init__(self,mat = 1,t = 130,j = 3, gamma_m = 1.265,*args, **kwargs):
         super().__init__(*args, **kwargs) 
         '''
-        @description: Basic paramater for SN curve calculation
-        @para: mat: {int} Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
-        @para: t: {float} Thickness of the material. /mm
+        @description: 
+            Basic paramater for SN curve calculation
+        @para: 
+            mat: {int} Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
+            t: {float} Thickness of the material. /mm
         @return: 
         '''
 
@@ -44,11 +45,13 @@ class SN_curve():
         self.sign_t = 0
 
 
-    def Cal(self):
+    def sn_base(self):
         '''
-        @description: Main function for SN-curve paramater calculation.
-        @param
+        @description: 
+            Main function for SN-curve paramater calculation.
+        @param:
         @return: 
+            Parameters of the base SN curve.
         '''
         from math import log10, sqrt
 
@@ -117,18 +120,20 @@ class SN_curve():
         self.N_e = 10**9
         self.sigm_e = (self.N_2/self.N_e)**(1/self.m2)*self.sigm_2
 
-    def sn_plot(self):
+    def sn_base_plot(self):
         '''
-        @description: figure plot of the initial SN surve.
+        @description: 
+            Figure plot of the initial SN surve.
         @param 
         @return: 
+            Figure of the base SN curve.
         '''
         import matplotlib.pyplot as plt
         x = [0,self.N_1,self.N_D,self.N_2,self.N_e]
         y = [self.sigm_1,self.sigm_1,self.sigm_d,self.sigm_2,self.sigm_e]
         plt.loglog(x,y,lw=2,marker='*')
-        plt.xlabel('N')
-        plt.ylabel('Amplitude MPa')
+        plt.xlabel('Cycle Numbers')
+        plt.ylabel('Stress Amplitude/MPa')
         plt.xlim(1,10**9)
         plt.yticks([10,100,1000])
         plt.annotate(s = '(%.1e,%.2f)' %(self.N_1,self.sigm_1), xy=(self.N_1,self.sigm_1))
@@ -138,8 +143,23 @@ class SN_curve():
         plt.annotate(s = 'm2=%.2f' %self.m2,xy=(10**7,40))
         plt.show()
         return    
+    
+    def amp_correc(self,method,mean_stress):
+        '''
+        @description: 
+            Stress amplitude correction by Haigh digram.
+        @param:
+            method: {str} method for mean stress correction. 'Haigh diagram' 
+            mean_stress: {float} mean_stress.
+        @return: 
+            Modified SN curve parameters.
+        ''' 
+        self.p1 = self.Rp/self.gamma_M
+        self.p4 = self.sigm_d
+        
+        return
 
 if __name__ == "__main__":
     a = SN_curve(mat=1,t=130)
-    a.Cal()
-    a.sn_plot()
+    a.sn_base()
+    a.sn_base_plot()
