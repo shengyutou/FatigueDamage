@@ -1,13 +1,24 @@
-class SN_curve():
+'''
+@Description:  SN curve calculation and modification according to GL2010.
+@Author: Louis.Wang
+@version: v1
+@Date: 2019-09-23 13:55:31
+@LastEditors: Louis.Wang
+@LastEditTime: 2019-09-24 10:18:03
+'''
 
+class SN_curve():
     def __init__(self,mat = 1,t = 130,j = 3, gamma_m = 1.265,*args, **kwargs):
         super().__init__(*args, **kwargs) 
-        """
-        Basic paramater for SN curve calculation
-        Arguments:
-            mat: Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
-            t: Thickness of the material. /mm
-        """
+        '''
+        @description: 
+            Basic paramater for SN curve calculation
+        @para: 
+            mat: {int} Type of the material 1 for spherpodal graphire cast iron; 2 for cast steel.
+            t: {float} Thickness of the material. /mm
+        @return: 
+        '''
+
         # Strength of tension. /MPa
         self.Rm = 360        
         # strength of yield. /MPa
@@ -34,10 +45,14 @@ class SN_curve():
         self.sign_t = 0
 
 
-    def Cal(self):
-        """
-        Main function for SN-curve paramater calculation.
-        """
+    def sn_base(self):
+        '''
+        @description: 
+            Main function for SN-curve paramater calculation.
+        @param:
+        @return: 
+            Parameters of the base SN curve.
+        '''
         from math import log10, sqrt
 
         self.Rb = self.Rm*1.06
@@ -55,10 +70,10 @@ class SN_curve():
         # fatigue strength of specimen
         if self.mat == 1:
             sigm_w = 0.27*self.Rb +100
-            M = 0.00035*self.Rb+0.08
+            self.M = 0.00035*self.Rb+0.08
         else:
             sigm_w = 0.27*self.Rb +85
-            M = 0.00035*self.Rb +0.05
+            self.M = 0.00035*self.Rb +0.05
 
         # fatigue shtrngth of component
         sigm_wk = sigm_w/F_ok
@@ -68,9 +83,9 @@ class SN_curve():
         self.m2 = 2*self.m1-1
 
         # factor for influence of mean stress
-        u = 1/(M+1)*sigm_wk/self.Rb
+        u = 1/(self.M+1)*sigm_wk/self.Rb
         a = (1+self.R)/(1-self.R)*sigm_wk/self.Rb
-        p = (1/(M+1)-1+u**2)/(u**2-u)
+        p = (1/(self.M+1)-1+u**2)/(u**2-u)
         if a==0:
             Fm = 1
         else:
@@ -98,26 +113,58 @@ class SN_curve():
         # upper limit of fatigue life line
         self.sigm_1 = self.Rp*(1-self.R)/self.gamma_M
         # number of load cycles at upper fatigue limit
+        # N_1*sigm_1**m = N_2*sigm_2**m
         self.N_1 = self.N_D*(2*self.sigm_d/self.sigm_1)**self.m1
-        self.sigm_2 = (self.N_D/5/10**6)**(1/self.m1)*self.sigm_d
-        self.sigm_e = (5/1000)**(1/self.m2)*self.sigm_2
+        self.N_2 = 5*10**6
+        self.sigm_2 = (self.N_D/self.N_2)**(1/self.m2)*self.sigm_d
+        self.N_e = 10**9
+        self.sigm_e = (self.N_2/self.N_e)**(1/self.m2)*self.sigm_2
 
-    def sn_plot(self):
+    def sn_base_plot(self):
+        '''
+        @description: 
+            Figure plot of the initial SN surve.
+        @param 
+        @return: 
+            Figure of the base SN curve.
+        '''
         import matplotlib.pyplot as plt
-        x = [0,self.N_1,self.N_D,5*10**6,10**9]
+        x = [0,self.N_1,self.N_D,self.N_2,self.N_e]
         y = [self.sigm_1,self.sigm_1,self.sigm_d,self.sigm_2,self.sigm_e]
         plt.loglog(x,y,lw=2,marker='*')
         plt.xlabel('Cycle Numbers')
         plt.ylabel('Stress Amplitude/MPa')
         plt.xlim(1,10**9)
         plt.yticks([10,100,1000])
-        plt.annotate(s = '(%.1e,%.2f)' %(self.N_1,self.sigm_1),xy=(self.N_1,self.sigm_1))
-        plt.annotate(s = '(%.1e,%.2f)' %(self.N_D,self.sigm_d),xy=(self.N_D,self.sigm_d))
-        plt.annotate(s = '(%.1e,%.2f)' %(5*10**6,self.sigm_2),xy=(5*10**6,2*self.sigm_2-self.sigm_d))
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_1,self.sigm_1), xy=(self.N_1,self.sigm_1))
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_D,self.sigm_d), xy=(self.N_D,self.sigm_d))
+        plt.annotate(s = '(%.1e,%.2f)' %(5*10**6,self.sigm_2), xy=(5*10**6,2*self.sigm_2-self.sigm_d))
+        plt.annotate(s = 'm1=%.2f' %self.m1,xy=(10**4,150))
+        plt.annotate(s = 'm2=%.2f' %self.m2,xy=(10**7,40))
         plt.show()
+        return    
+    
+    def haigh(self, plot = True):
+        '''
+        @description: 
+            Parameter calculation of  Haigh digram.
+        @param:
+        @return: 
+            Modified SN curve parameters.
+        ''' 
+        self.p4 = [0,self.sigm_d]
+        self.p1 = [self.Rp/self.gamma_M, 0]
+        self.p7 = [-self.Rp/self.gamma_M, 0]
+        self.p3 = [self.sigm_d/(1+self.M), self.sigm_d/(1+self.M)]
+        if self.mat == 1:
+            self.p2 = [(self.Rp/self.gamma_M-self.sigm_d)/(1-self.M), (self.sigm_d-self.Rp*self.M/self.gamma_M)/(1-self.M)]
+        else:
+            self.p2 = [(self.Rp/self.gamma_M*3-self.sigm_d)/(1-self.M/3), (self.sigm_d-self.Rp*self.M/3/self.gamma_M)/(1-self.M/3)]
+        
+        
         return
 
 if __name__ == "__main__":
     a = SN_curve(mat=1,t=130)
-    a.Cal()
-    a.sn_plot()
+    a.sn_base()
+    a.sn_base_plot()
