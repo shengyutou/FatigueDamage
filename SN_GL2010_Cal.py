@@ -107,14 +107,15 @@ class SN_curve():
         x = [0,self.N_1,self.N_D,5*10**6,10**9]
         y = [self.sigm_1,self.sigm_1,self.sigm_d,self.sigm_2,self.sigm_e]
         plt.loglog(x,y,lw=2,marker='*')
-        plt.xlabel('N')
-        plt.ylabel('Amplitude MPa')
-        plt.xlim(0,10**9)
+        plt.xlabel('Cycle Numbers')
+        plt.ylabel('Stress Amplitude/MPa')
+        plt.xlim(1,10**9)
         plt.yticks([10,100,1000])
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_1,self.sigm_1),xy=(self.N_1,self.sigm_1))
+        plt.annotate(s = '(%.1e,%.2f)' %(self.N_D,self.sigm_d),xy=(self.N_D,self.sigm_d))
+        plt.annotate(s = '(%.1e,%.2f)' %(5*10**6,self.sigm_2),xy=(5*10**6,2*self.sigm_2-self.sigm_d))
         plt.show()
         return
-
-    
 
 if __name__ == "__main__":
     a = SN_curve(mat=1,t=130)
