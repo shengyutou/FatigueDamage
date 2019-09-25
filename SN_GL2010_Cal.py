@@ -160,20 +160,36 @@ class SN_curve():
         self.p3 = self.sigm_d/(1+self.M) # self.sigm_d/(1+self.M)
         self.p4 = 0 # self.sigm_d
         self.p5 = self.sigm_d/(self.M-1) # self.sigm_d/(1-self.M)
-        self.p6 = self.sigm_d*self.M/(1-self.M) # self.sigm_d/(1-self.M)
+        self.p6 = self.sigm_d/(1-self.M)-self.Rp/self.gamma_M # self.sigm_d/(1-self.M)
         self.p7 = -self.Rp/self.gamma_M # 0        
         return
 
-    def Amp_Correct(self):
+    def Amp_Correct(self, mean_stress):
         '''
         @description: 
             sigm_d correction based on the Haigh digram.
         @param:
         @return: 
-            Modified SN curve parameters.
+            Modified SN curve parameters: sigm_d.
         '''
-        
-        return
+        if mean_stress <= self.p7:
+            sigm_d = 0
+        elif mean_stress <= self.p6:
+            sigm_d = mean_stress + self.Rp/self.gamma_M
+        elif mean_stress <= self.p5:
+            sigm_d = self.sigm_d/(1-self.M)
+        elif mean_stress <= self.p3:
+            sigm_d = self.d-mean_stress*self.M
+        elif mean_stress <= self.p2:
+            if self.mat == 1:
+                sigm_d = self.d-mean_stress*self.M
+            elif self.mat == 2:
+                sigm_d = -self.M*mean_stress/3+self.sigm_d*(3+self.M)/3/(1+self.M)
+        elif mean_stress <= self.p1:
+            sigm_d = self.Rp/self.gamma_M-mean_stress
+        else:
+            sigm_d = 0
+        return sigm_d
 
 
 if __name__ == "__main__":
