@@ -150,19 +150,31 @@ class SN_curve():
             Parameter calculation of  Haigh digram.
         @param:
         @return: 
-            Modified SN curve parameters.
-        ''' 
-        self.p4 = [0,self.sigm_d]
-        self.p1 = [self.Rp/self.gamma_M, 0]
-        self.p7 = [-self.Rp/self.gamma_M, 0]
-        self.p3 = [self.sigm_d/(1+self.M), self.sigm_d/(1+self.M)]
+            Global Haigh diagram parameters.
+        '''         
+        self.p1 = self.Rp/self.gamma_M  # 0
         if self.mat == 1:
-            self.p2 = [(self.Rp/self.gamma_M-self.sigm_d)/(1-self.M), (self.sigm_d-self.Rp*self.M/self.gamma_M)/(1-self.M)]
+            self.p2 = (self.Rp/self.gamma_M-self.sigm_d)/(1-self.M) # (self.sigm_d-self.Rp*self.M/self.gamma_M)/(1-self.M)
         else:
-            self.p2 = [(self.Rp/self.gamma_M*3-self.sigm_d)/(1-self.M/3), (self.sigm_d-self.Rp*self.M/3/self.gamma_M)/(1-self.M/3)]
-        
+            self.p2 = (self.Rp/self.gamma_M*3-self.sigm_d)/(1-self.M/3)  # (self.sigm_d-self.Rp*self.M/3/self.gamma_M)/(1-self.M/3)
+        self.p3 = self.sigm_d/(1+self.M) # self.sigm_d/(1+self.M)
+        self.p4 = 0 # self.sigm_d
+        self.p5 = self.sigm_d/(self.M-1) # self.sigm_d/(1-self.M)
+        self.p6 = self.sigm_d*self.M/(1-self.M) # self.sigm_d/(1-self.M)
+        self.p7 = -self.Rp/self.gamma_M # 0        
+        return
+
+    def Amp_Correct(self):
+        '''
+        @description: 
+            sigm_d correction based on the Haigh digram.
+        @param:
+        @return: 
+            Modified SN curve parameters.
+        '''
         
         return
+
 
 if __name__ == "__main__":
     a = SN_curve(mat=1,t=130)
