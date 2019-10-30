@@ -7,7 +7,7 @@
 """
 
 
-class SN_curve():
+class sn_gl():
     def __init__(self, mat=1, t=130, j=3, gamma_m=1.265, *args, **kwargs):
         # super().__init__(*args, **kwargs) 
         """
@@ -130,7 +130,7 @@ class SN_curve():
         @return: 
             Figure of the base SN curve.
         '''
-        import matplotlib.pyplot as plt
+
         x = [0, self.N_1, self.N_D, self.N_e]
         y = [self.sigm_1, self.sigm_1, self.sigm_d, self.sigm_e]
         plt.loglog(x, y, lw=2, marker='*')
