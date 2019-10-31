@@ -1,4 +1,4 @@
-# SN-curve
+# Fatigue Damage Calculation
 SN curve according to GL2010.
 
 2019/10/29
