@@ -314,10 +314,12 @@ class SnGL(object):
 
         return sorted(counts.items())
 
+    def mean_correction(self):
+        return
+
 
 if __name__ == '__main__':
     from numpy import loadtxt
     test = SnGL()
     test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
     test_counts = test.rainflow(test_data[:, 5], ndigits=2)
-    print(test_counts)
