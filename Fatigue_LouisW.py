@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # _*_coding:utf-8 _*_
 """
-@Time    : 10/30/19 1:35 PM
-@Author  : Louis Wang
+@Time    : 10/30/19 1:35 PM
+@Author  : Louis Wang
 @Email   : louis1990.wang@outlook.com
 @FileName: Fatigue_LouisW.py
 @Software: PyCharm
@@ -12,9 +12,8 @@
 class SnGL(object):
     def __init__(self, mat='GGG', t=120, j=3, gamma_m=1.265, modified_t=False):
         """
-        @description:
-            Calculation of the basic SN curve parameters according to GL2010.
-        @para:
+        Calculation of the basic SN curve parameters according to GL2010.
+        Args:
             Rm: {float} Strength of tension. /MPa
             self.Rp: {float}strength of yield. /MPa
             mat: {str} material type. GGG for cast iron.
@@ -28,7 +27,8 @@ class SnGL(object):
             gamma_m: {float} partial safety factor for material.
             sigma_b: {float} Modified tensile strength. /MPa
             M: {float} Mean stress sensitivity
-        @return:
+        Returns:
+            Global parameters of the basic SN curve.
         """
         self.Rm = 360
         self.Rp = 220
@@ -50,10 +50,15 @@ class SnGL(object):
         else:
             self.M = 0.00035 * self.sigma_b + 0.05
 
-    def cal(self, plot=False, save=True):
+    def cal_basic(self, plot=False, save=True):
         """
             Calculation the basic parameters.
-        :return: m1, m2, sigma_D, N_d, plot(if plot == True)
+        Args:
+            plot:
+            save:
+
+        Returns:
+            m1, m2, sigma_D, N_d, plot(if plot == True)
         """
         from math import log10, sqrt
         import matplotlib.pyplot as plt
@@ -177,143 +182,142 @@ class SnGL(object):
             pass
         return
 
-from collections import deque, defaultdict
-import functools
+    def rainflow(self, series, ndigits=None, left=False, right=False):
+        """
+        Count amplitude, mean and cycles in the series.
+        Args:
+            series: iterable sequence of numbers
+            ndigits: int, optional. Round cycle magnitudes to the given number of digits before counting.
+            left: bool, optional. If True, treat the first point in the series as a reversal.
+            right: bool, optional. If True, treat the last point in the series as a reversal.
+        Returns:
+            A sorted list containing pairs of cycle magnitude, mean and count.
+             One-half cycles are counted as 0.5, so the returned counts may not be whole numbers.
+        """
+        from collections import deque, defaultdict
+        from math import ceil
+        import functools
 
+        def _get_round_function(ndigits=None):
+            if ndigits is None:
 
-def _get_round_function(ndigits=None):
-    if ndigits is None:
-        def func(x):
-            return x
-    else:
-        def func(x):
-            return round(x, ndigits)
-    return func
-
-
-def reversals(series, left=False, right=False):
-    """Iterate reversal points in the series.
-    A reversal point is a point in the series at which the first derivative
-    changes sign. Reversal is undefined at the first (last) point because the
-    derivative before (after) this point is undefined. The first and the last
-    points may be treated as reversals by setting the optional parameters
-    `left` and `right` to True.
-    Parameters
-    ----------
-    series : iterable sequence of numbers
-    left: bool, optional
-        If True, yield the first point in the series (treat it as a reversal).
-    right: bool, optional
-        If True, yield the last point in the series (treat it as a reversal).
-    Yields
-    ------
-    float
-        Reversal points.
-    """
-    series = iter(series)
-
-    x_last, x = next(series), next(series)
-    d_last = (x - x_last)
-
-    if left:
-        yield x_last
-    for x_next in series:
-        if x_next == x:
-            continue
-        d_next = x_next - x
-        if d_last * d_next < 0:
-            yield x
-        x_last, x = x, x_next
-        d_last = d_next
-    if right:
-        yield x_next
-
-
-def _sort_lows_and_highs(func):
-    "Decorator for extract_cycles"
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        for low, high, mult in func(*args, **kwargs):
-            if low < high:
-                yield low, high, mult
+                def func(x):
+                    return x
             else:
-                yield high, low, mult
-    return wrapper
 
+                def func(x):
+                    return round(x, ndigits)
 
-@_sort_lows_and_highs
-def extract_cycles(series, left=False, right=False):
-    """Iterate cycles in the series.
-    Parameters
-    ----------
-    series : iterable sequence of numbers
-    left: bool, optional
-        If True, treat the first point in the series as a reversal.
-    right: bool, optional
-        If True, treat the last point in the series as a reversal.
-    Yields
-    ------
-    cycle : tuple
-        Each tuple contains three floats (low, high, mult), where low and high
-        define cycle amplitude and mult equals to 1.0 for full cycles and 0.5
-        for half cycles.
-    """
-    points = deque()
+            return func
 
-    for x in reversals(series, left=left, right=right):
-        points.append(x)
-        while len(points) >= 3:
-            # Form ranges X and Y from the three most recent points
-            X = abs(points[-2] - points[-1])
-            Y = abs(points[-3] - points[-2])
+        def reversals(series, left=False, right=False):
+            """Iterate reversal points in the series.
+            A reversal point is a point in the series at which the first derivative
+            changes sign. Reversal is undefined at the first (last) point because the
+            derivative before (after) this point is undefined. The first and the last
+            points may be treated as reversals by setting the optional parameters
+            `left` and `right` to True.
+            Parameters
+            ----------
+            series : iterable sequence of numbers
+            left: bool, optional
+                If True, yield the first point in the series (treat it as a reversal).
+            right: bool, optional
+                If True, yield the last point in the series (treat it as a reversal).
+            Yields
+            ------
+            float
+                Reversal points.
+            """
+            series = iter(series)
 
-            if X < Y:
-                # Read the next point
-                break
-            elif len(points) == 3:
-                # Y contains the starting point
-                # Count Y as one-half cycle and discard the first point
-                yield points[0], points[1], 0.5
-                points.popleft()
+            x_last, x = next(series), next(series)
+            d_last = (x - x_last)
+
+            if left:
+                yield x_last
+            for x_next in series:
+                if x_next == x:
+                    continue
+                d_next = x_next - x
+                if d_last * d_next < 0:
+                    yield x
+                x_last, x = x, x_next
+                d_last = d_next
+            if right:
+                yield x_next
+
+        def _sort_lows_and_highs(func):
+            """Decorator for extract_cycles
+            """
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                for low, high, mult in func(*args, **kwargs):
+                    if low < high:
+                        yield low, high, mult
+                    else:
+                        yield high, low, mult
+
+            return wrapper
+
+        @_sort_lows_and_highs
+        def extract_cycles(series, left=False, right=False):
+            """
+            Iterate cycles in the series.
+            Args:
+                series:
+                left:
+                right:
+
+            Returns:
+                cycle : tuple
+                Each tuple contains three floats (low, high, mult), where low and high
+                define cycle amplitude and mult equals to 1.0 for full cycles and 0.5
+                for half cycles.
+            """
+            points = deque()
+
+            for x in reversals(series, left=left, right=right):
+                points.append(x)
+                while len(points) >= 3:
+                    # Form ranges X and Y from the three most recent points
+                    X = abs(points[-2] - points[-1])
+                    Y = abs(points[-3] - points[-2])
+
+                    if X < Y:
+                        # Read the next point
+                        break
+                    elif len(points) == 3:
+                        # Y contains the starting point
+                        # Count Y as one-half cycle and discard the first point
+                        yield points[0], points[1], 0.5
+                        points.popleft()
+                    else:
+                        # Count Y as one cycle and discard the peak and the valley of Y
+                        yield points[-3], points[-2], 1.0
+                        last = points.pop()
+                        points.pop()
+                        points.pop()
+                        points.append(last)
             else:
-                # Count Y as one cycle and discard the peak and the valley of Y
-                yield points[-3], points[-2], 1.0
-                last = points.pop()
-                points.pop()
-                points.pop()
-                points.append(last)
-    else:
-        # Count the remaining ranges as one-half cycles
-        while len(points) > 1:
-            yield points[0], points[1], 0.5
-            points.popleft()
+                # Count the remaining ranges as one-half cycles
+                while len(points) > 1:
+                    yield points[0], points[1], 0.5
+                    points.popleft()
 
+        counts = defaultdict(float)
+        round_ = _get_round_function(ndigits)
+        for low, high, mult in extract_cycles(series, left=left, right=right):
+            delta = round_(abs(high - low))
+            mean = round_((high + low) / 2)
+            counts[(delta, mean)] += mult
 
-def count_cycles(series, ndigits=None, left=False, right=False):
-    """Count cycles in the series.
-    Parameters
-    ----------
-    series : iterable sequence of numbers
-    ndigits : int, optional
-        Round cycle magnitudes to the given number of digits before counting.
-    left: bool, optional
-        If True, treat the first point in the series as a reversal.
-    right: bool, optional
-        If True, treat the last point in the series as a reversal.
-    Returns
-    -------
-    A sorted list containing pairs of cycle magnitude and count.
-    One-half cycles are counted as 0.5, so the returned counts may not be
-    whole numbers.
-    """
-    counts = defaultdict(float)
-    round_ = _get_round_function(ndigits)
+        return sorted(counts.items())
 
-    for low, high, mult in extract_cycles(series, left=left, right=right):
-        delta = round_(abs(high - low))
-        counts[delta] += mult
-    return sorted(counts.items())
 
 if __name__ == '__main__':
+    from numpy import loadtxt
     test = SnGL()
-    test.cal(plot=True, save=True)
+    test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
+    test_counts = test.rainflow(test_data[:, 5], ndigits=2)
+    print(test_counts)
