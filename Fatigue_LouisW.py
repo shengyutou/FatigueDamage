@@ -7,28 +7,44 @@
 @FileName: Fatigue_LouisW.py
 @Software: PyCharm
 """
+from math import log10, sqrt
+import matplotlib.pyplot as plt
 
 
 class SnGL(object):
-    def __init__(self, mat='GGG', t=120, j=3, gamma_m=1.265, modified_t=False):
+    def __init__(self,
+                 mat='GGG',
+                 t=120,
+                 j=3,
+                 gamma_m=1.265,
+                 modified_t=False,
+                 plot=False,
+                 save=True):
         """
         Calculation of the basic SN curve parameters according to GL2010.
         Args:
-            Rm: {float} Strength of tension. /MPa
-            self.Rp: {float}strength of yield. /MPa
             mat: {str} material type. GGG for cast iron.
+            Rm: {float} Strength of tension. /MPa
+            Rp: {float}strength of yield. /MPa
             t: {float} thickness of the material.
-            sign_tc: {bool} whether to consider thickness correction.
             Rz: {float} Surface roughness.
-            R: {float} stress ratio.
+            R: {float} stress ratio. default value is -1
             j: {float} quality level for component.
             j_0: {float} constant for material and test method.
             S_pu: {float} survival probability.
             gamma_m: {float} partial safety factor for material.
             sigma_b: {float} Modified tensile strength. /MPa
             M: {float} Mean stress sensitivity
+            modified_t: {bool} whether to consider thickness correction.
+            plot: {bool} plot the basic SN curve.
+            save: {bool} save the basic parameters of the SN curve.
         Returns:
             Global parameters of the basic SN curve.
+            m1: {float} slope of left of the knee point
+            m2: {float} slope of right of the knee point
+            sigma_D: {float} stress amplitude at the knee point
+            N_D: {float} cycle number of the knee point
+
         """
         self.Rm = 360
         self.Rp = 220
@@ -50,18 +66,6 @@ class SnGL(object):
         else:
             self.M = 0.00035 * self.sigma_b + 0.05
 
-    def cal_basic(self, plot=False, save=True):
-        """
-            Calculation the basic parameters.
-        Args:
-            plot:
-            save:
-
-        Returns:
-            m1, m2, sigma_D, N_d, plot(if plot == True)
-        """
-        from math import log10, sqrt
-        import matplotlib.pyplot as plt
         # Surface roughness factor
         F_o = (1 - 0.22 * (log10(self.Rz)**0.64) * log10(self.sigma_b) + 0.45 *
                (log10(self.Rz)**0.53))
@@ -105,84 +109,85 @@ class SnGL(object):
         S_d = 0.85**(self.j - self.j_0)
         S_t = (self.t / 25)**((-0.15) * self.sign_tc)
         S = self.S_pu * S_d * S_t
-
         # Upgraded stress amplitude at knee of SN curve
         self.sigma_D = sigma_A * S / self.gamma_M
-        # Upper limit of fatigue life line
+
+    def para_save(self):
+        # Parameters saved to .txt file
+        sigma_1 = self.Rp * (1 - self.R) / self.gamma_M
+        N_e = 10**9
+        sigma_e = (self.N_D / N_e)**(1 / self.m2) * self.sigma_D
+        # Parameters of the haigh diagram
+        sigma_p = self.sigma_D / (self.M + 1)
+        with open('SN_Curve.txt', 'w') as f:
+            f.write('Summary of the SN curve Parameter\n')
+            f.write('*' * 30 + '\n')
+            f.write('Material:\n%s\n' % self.mat)
+            f.write('Stress ratio R:\n%s\n' % self.R)
+            f.write('*' * 30 + '\n')
+            f.write(
+                'Calculation of SN curve according to the GL2010 5.B.3.1 and 5.B.3.2.\n'
+            )
+            f.write('*' * 30 + '\n')
+            f.write('Tensile strength:\n')
+            f.write('%s\n' % self.Rm)
+            f.write('Yield Strength:\n')
+            f.write('%s\n' % self.Rp)
+            f.write('Alternating stress limit (Amplitude/Range):\n')
+            f.write('%.2f/%.2f\n' % (self.sigma_D, 2 * self.sigma_D))
+            f.write('Pulsating stress limit (Amplitude/Range):\n')
+            f.write('%.2f/%.2f\n' % (sigma_p, 2 * sigma_p))
+            f.write('Slope of the SN curve (Left/Right of the knee point):\n')
+            f.write('%.2f/%.2f\n' % (self.m1, self.m2))
+            f.write('Number of load cycles at knee of SN curve:\n')
+            f.write('%.2e\n' % self.N_D)
+            f.write('Mean stress sensitivity:\n')
+            f.write('%.3f\n' % self.M)
+            f.write('*' * 30 + '\n')
+            f.write('Parameter of the Haigh Diagram:\n')
+            f.write('*' * 30 + '\n')
+            f.write('Mean stress / Amplitude:\n')
+            f.write('%11.2f/%11d\n' % ((self.Rp / self.gamma_M), 0))
+            if self.mat == 'GGG':
+                f.write('%11.2f/%11.2f\n' %
+                        ((self.Rp / self.gamma_M - self.sigma_D) /
+                         (1 - self.M), self.M *
+                         (self.Rp / self.gamma_M - self.sigma_D) /
+                         (self.M - 1) + self.sigma_D))
+            else:
+                f.write("")
+            f.write('%11.2f/%11.2f\n' % (sigma_p, sigma_p))
+            f.write('%11d/%11.2f\n' % (0, self.sigma_D))
+            f.write('%11.2f/%11.2f\n' %
+                    (self.sigma_D / (self.M - 1), -self.sigma_D /
+                     (self.M - 1)))
+            f.write('%11.2f/%11d\n' % ((-self.Rp / self.gamma_M), 0))
+            f.close()
+        return
+
+    def sn_plot(self):
+        # Plot of the basic SN curve according to GL2010
         sigma_1 = self.Rp * (1 - self.R) / self.gamma_M
         # Number of load cycles at upper fatigue limit
         N_1 = self.N_D * (2 * self.sigma_D / sigma_1)**self.m1
         N_e = 10**9
         sigma_e = (self.N_D / N_e)**(1 / self.m2) * self.sigma_D
-        # Parameters of the haigh diagram
-        sigma_p = self.sigma_D / (self.M + 1)
-        # Parameters saved to .txt file
-        if save:
-            with open('SN_Curve.txt', 'w') as f:
-                f.write('Summary of the SN curve Parameter\n')
-                f.write('*' * 30 + '\n')
-                f.write('Material:\n%s\n' % self.mat)
-                f.write('Stress ratio R:\n%s\n' % self.R)
-                f.write('*' * 30 + '\n')
-                f.write(
-                    'Calculation of SN curve according to the GL2010 5.B.3.1 and 5.B.3.2.\n'
-                )
-                f.write('*' * 30 + '\n')
-                f.write('Tensile strength:\n')
-                f.write('%s\n' % self.Rm)
-                f.write('Yield Strength:\n')
-                f.write('%s\n' % self.Rp)
-                f.write('Alternating stress limit (Amplitude/Range):\n')
-                f.write('%.2f/%.2f\n' % (self.sigma_D, 2 * self.sigma_D))
-                f.write('Pulsating stress limit (Amplitude/Range):\n')
-                f.write('%.2f/%.2f\n' % (sigma_p, 2 * sigma_p))
-                f.write(
-                    'Slope of the SN curve (Left/Right of the knee point):\n')
-                f.write('%.2f/%.2f\n' % (self.m1, self.m2))
-                f.write('Number of load cycles at knee of SN curve:\n')
-                f.write('%.2e\n' % self.N_D)
-                f.write('Mean stress sensitivity:\n')
-                f.write('%.3f\n' % self.M)
-                f.write('*' * 30 + '\n')
-                f.write('Parameter of the Haigh Diagram:\n')
-                f.write('*' * 30 + '\n')
-                f.write('Mean stress / Amplitude:\n')
-                f.write('%11.2f/%11d\n' % ((self.Rp / self.gamma_M), 0))
-                if self.mat == 'GGG':
-                    f.write('%11.2f/%11.2f\n' %
-                            ((self.Rp / self.gamma_M - self.sigma_D) /
-                             (1 - self.M), self.M *
-                             (self.Rp / self.gamma_M - self.sigma_D) /
-                             (self.M - 1) + self.sigma_D))
-                else:
-                    f.write("")
-                f.write('%11.2f/%11.2f\n' % (sigma_p, sigma_p))
-                f.write('%11d/%11.2f\n' % (0, self.sigma_D))
-                f.write('%11.2f/%11.2f\n' %
-                        (self.sigma_D / (self.M - 1), -self.sigma_D /
-                         (self.M - 1)))
-                f.write('%11.2f/%11d\n' % ((-self.Rp / self.gamma_M), 0))
-                f.close()
-        # Plot of the basic SN curve according to GL2010
-        if plot:
-            x = [0, N_1, self.N_D, N_e]
-            y = [sigma_1, sigma_1, self.sigma_D, sigma_e]
-            plt.loglog(x, y, lw=2, marker='*')
-            plt.xlabel('Cycle Numbers')
-            plt.ylabel('Stress Amplitude/MPa')
-            plt.xlim(10, 10**9)
-            plt.yticks([10, 100, 1000])
-            plt.annotate(s='(%.2e,%.2f)' % (N_1, sigma_1), xy=(N_1, sigma_1))
-            plt.annotate(s='(%.2e,%.2f)' % (self.N_D, self.sigma_D),
-                         xy=(self.N_D, self.sigma_D))
-            plt.annotate(s='m1=%.2f' % self.m1, xy=(10**3, 142))
-            plt.annotate(s='m2=%.2f' % self.m2, xy=(10**7, 40))
-            plt.show()
-        else:
-            pass
+        x = [0, N_1, self.N_D, N_e]
+        y = [sigma_1, sigma_1, self.sigma_D, sigma_e]
+        plt.loglog(x, y, lw=2, marker='*')
+        plt.xlabel('Cycle Numbers')
+        plt.ylabel('Stress Amplitude/MPa')
+        plt.xlim(10, 10**9)
+        plt.yticks([10, 100, 1000])
+        plt.annotate(s='(%.2e,%.2f)' % (N_1, sigma_1), xy=(N_1, sigma_1))
+        plt.annotate(s='(%.2e,%.2f)' % (self.N_D, self.sigma_D),
+                     xy=(self.N_D, self.sigma_D))
+        plt.annotate(s='m1=%.2f' % self.m1, xy=(10**3, 142))
+        plt.annotate(s='m2=%.2f' % self.m2, xy=(10**7, 40))
+        plt.show()
         return
 
-    def rainflow(self, series, ndigits=None, left=False, right=False):
+    def rainflow(self, series, ndigits=None, left=True, right=True):
         """
         Count amplitude, mean and cycles in the series.
         Args:
@@ -195,7 +200,6 @@ class SnGL(object):
              One-half cycles are counted as 0.5, so the returned counts may not be whole numbers.
         """
         from collections import deque, defaultdict
-        from math import ceil
         import functools
 
         def _get_round_function(ndigits=None):
@@ -314,8 +318,19 @@ class SnGL(object):
 
         return sorted(counts.items())
 
-    def mean_correction(self):
-        return
+    def mean_amplitude(self, mean_stress):
+        if mean_stress <= self.sigma_D - self.M * self.sigma_D / (
+                self.M - 1) - self.Rp / self.gamma_M:
+            sigma_d_m = mean_stress + self.Rp / self.gamma_M
+        elif mean_stress <= self.sigma_D / (self.M - 1):
+            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
+        elif mean_stress <= (self.Rp / self.gamma_M - self.sigma_D) / (1 -
+                                                                       self.M):
+            sigma_d_m = self.sigma_D - self.M * mean_stress
+        else:
+            sigma_d_m = self.Rp - (self.Rp / self.gamma_M -
+                                   self.sigma_D) / (1 - self.M)
+        return sigma_d_m
 
 
 if __name__ == '__main__':
@@ -323,3 +338,5 @@ if __name__ == '__main__':
     test = SnGL()
     test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
     test_counts = test.rainflow(test_data[:, 5], ndigits=2)
+    print(test.sigma_D)
+    print(test.mean_amplitude(20))
