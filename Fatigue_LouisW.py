@@ -218,7 +218,7 @@ class SnGL(object):
 
             return func
 
-        def reversals(series, left=False, right=False):
+        def reversals(seriesr, left=False, right=False):
             """Iterate reversal points in the series.
             A reversal point is a point in the series at which the first derivative
             changes sign. Reversal is undefined at the first (last) point because the
@@ -227,7 +227,7 @@ class SnGL(object):
             `left` and `right` to True.
             Parameters
             ----------
-            series : iterable sequence of numbers
+            seriesr : iterable sequence of numbers
             left: bool, optional
                 If True, yield the first point in the series (treat it as a reversal).
             right: bool, optional
@@ -237,14 +237,14 @@ class SnGL(object):
             float
                 Reversal points.
             """
-            series = iter(series)
+            seriesr = iter(seriesr)
 
-            x_last, x = next(series), next(series)
+            x_last, x = next(seriesr), next(seriesr)
             d_last = (x - x_last)
 
             if left:
                 yield x_last
-            for x_next in series:
+            for x_next in seriesr:
                 if x_next == x:
                     continue
                 d_next = x_next - x
@@ -367,39 +367,89 @@ class SnGL(object):
         locs = sheet.col_values(1)[1:]
         counts1 = sheet.col_values(7)[1:]
         counts2 = sheet.col_values(3)[1:]
-        counts = [
-            counts1[i] if isinstance(counts1[i], float) else counts2[i]
-            for i in range(len(counts1))
+        count_loc = [
+            counts1[j] if isinstance(counts1[j], float) else counts2[j]
+            for j in range(len(counts1))
         ]
-        return locs, counts
+        return locs, count_loc
+
+    @staticmethod
+    def unit_stress(unit_file, load_num):
+        from numpy import array, hstack, delete
+        ele_nd = []
+        for i in range(load_num):
+            ele_s = []
+            with open(r'%s/Sxyz_LF_%s.txt' % (unit_file, i + 1)) as f:
+                line = f.readline()
+                while line:
+                    try:
+                        ele_s.append([
+                            float(line[:9]),
+                            float(line[10:21]),
+                            float(line[22:35]),
+                            float(line[36:-1])
+                        ])
+                        line = f.readline()
+                    except:
+                        line = f.readline()
+                try:
+                    ele_nd = hstack((ele_nd, delete(array(ele_s), 0, 1)))
+                except:
+                    ele_nd = array(ele_s)
+        return ele_nd
+
+    def stress_combine(self, load_file, unit_load_file, load_num):
+
+        return
 
 
 if __name__ == '__main__':
-    from numpy import random
+    import time
     from numpy import loadtxt
 
-    import time
     test = SnGL()
-
-    stress = random.randn(100000) * 10
-    rf = test.rainflow(stress, ndigits=10)
-    # D_Sum = []
-    
-    # for i in range(len(rf)):
-    #     d = test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1])
-    #     D_Sum.append(test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1]))
-
-
     # load read test
-    i = 0
-    locs, counts = test.times_read('./Data/times.xlsx')
-    for loc in locs:
-        i += 1
-        start = time.time()
-        load = loadtxt(r'%s.txt' % loc, skiprows=2)[:,11]
-        markov = test.rainflow(load, ndigits=1)
-        end = time.time()
-        print('For load case %s, time spend %.2f s.' % (i, (end - start)))
+    # i = 0
+    # locs, counts = test.times_read('./Data/times.xlsx')
+    # D = []
+    # start = time.time()
+    # for loc in locs:
+    #     i += 1
+    #
+    #     load = loadtxt(r'%s.txt' % loc, skiprows=2)[:, 1]
+    #     markov = test.rainflow(load, ndigits=2)
+    #     d = 0
+    #     for lis in markov:
+    #         d += test.damage_s(lis[0][0], lis[0][1], lis[1])
+    #     D.append(d)
+    # end = time.time()
+    # print('Time spend %.2f s.' % (end - start))
+
+    # read the unit load result
+    start = time.time()
+    unit_load_result = test.unit_stress('./Factor', 15)
+    end = time.time()
+    print('Unit load result read. Time spend %.2f s.' % (end - start))
+
+    # load case location and occur times read, and rainflow
+    start = time.time()
+    loc, count = test.times_read('./Data/times.xlsx')
+    load_all = {}
+    for loc in loc:
+        load_all[loc.split('\\')[-1]] = loadtxt(r'%s.txt' % loc, skiprows=2)[:, -6:-1]
+    end = time.time()
+    print('Time series load read spend %.2f s.' % (end - start))
+    
+    # time series stress combination
+    for node in unit_load_result[0, 0]:
+        times_s = stress_combine()
         
     
+    #     markov = test.rainflow(load, ndigits=2)
+    #     d = 0
+    #     for lis in markov:
+    #         d += test.damage_s(lis[0][0], lis[0][1], lis[1])
+    #     D.append(d)
 
+    # for node in unit_load_result[:, 0]:
+    #     print('Fatigue damage calculating of node %s:' % int(node))
