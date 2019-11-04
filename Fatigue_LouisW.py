@@ -8,7 +8,7 @@
 @Software: PyCharm
 """
 from math import log10, sqrt
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 
 class SnGL(object):
@@ -320,14 +320,17 @@ class SnGL(object):
 
         return sorted(counts.items())
 
-    def factor_meanstress(self, mean_stress):
+    def factor_ms(self, mean_stress, ms_correction):
         """
             mean stress correction of the sn curve stress limit at knee point according to FKM.
         Args:
             mean_stress:
+            ms_correction: {Bool} mean stress correction.
         Returns:
-            modified factor: modified sigma_d/ self.sigma_D
+            correction factor: sigma_d/ self.sigma_D
         """
+        if not ms_correction:
+            return 1
         if self.h2x <= mean_stress <= self.h3x:
             sigma_d_m = self.sigma_D - self.M * mean_stress
         elif self.h1x <= mean_stress < self.h2x:
@@ -339,11 +342,21 @@ class SnGL(object):
                                                   self.sigma_D) / (1 - self.M)
         return sigma_d_m / self.sigma_D
 
+    def damage_s(self, amplitude, mean, count, ms_correction=True):
+        sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
+        if mean <= sigma_d:
+            damage = count / (self.N_D * (sigma_d/amplitude)**self.m1)
+        else:
+            damage = count / (self.N_D * (sigma_d/amplitude)**self.m2)
+        return damage
+
 
 if __name__ == '__main__':
-    from numpy import loadtxt
+    from numpy import random
     test = SnGL()
-    # test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
-    # test_counts = test.rainflow(test_data[:, 5], ndigits=2)
     print(test.sigma_D)
-    print(test.factor_meanstress(20))
+    stress = random.randn(100000)*10
+    rf = test.rainflow(stress, ndigits=10)
+    D_Sum = []
+    for i in range(len(rf)):   
+        D_Sum.append(test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1]))
