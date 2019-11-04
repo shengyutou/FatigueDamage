@@ -15,57 +15,57 @@ class SnGL(object):
     def __init__(self,
                  mat='GGG',
                  t=120,
+                 rm=360,
+                 rp=220,
+                 rz=125,
+                 r=-1,
+                 j_0=1,
                  j=3,
+                 s_pu=2 / 3,
                  gamma_m=1.265,
-                 modified_t=False,
-                 plot=False,
-                 save=True):
+                 modified_t=False):
         """
-        Calculation of the basic SN curve parameters according to GL2010.
+        Calculation of the basic SN curve parameters according to GL2010 Fig.5.B.3.
         Args:
             mat: {str} material type. GGG for cast iron.
-            Rm: {float} Strength of tension. /MPa
-            Rp: {float}strength of yield. /MPa
+            rm: {float} Strength of tension. /MPa
+            rp: {float} strength of yield. /MPa
             t: {float} thickness of the material.
-            Rz: {float} Surface roughness.
-            R: {float} stress ratio. default value is -1
+            rz: {float} Surface roughness.
+            r: {float} stress ratio. default value is -1
             j: {float} quality level for component.
             j_0: {float} constant for material and test method.
-            S_pu: {float} survival probability.
+            s_pu: {float} survival probability.
             gamma_m: {float} partial safety factor for material.
-            sigma_b: {float} Modified tensile strength. /MPa
-            M: {float} Mean stress sensitivity
-            modified_t: {bool} whether to consider thickness correction.
-            plot: {bool} plot the basic SN curve.
-            save: {bool} save the basic parameters of the SN curve.
+            modified_t: {bool} whether to consider thickness correction. default is False. The thickness dependent
+                material strength is considered in the tension/ yield strength
         Returns:
             Global parameters of the basic SN curve.
+            M: {float} Mean stress sensitivity
             m1: {float} slope of left of the knee point
             m2: {float} slope of right of the knee point
             sigma_D: {float} stress amplitude at the knee point
             N_D: {float} cycle number of the knee point
-
         """
-        self.Rm = 360
-        self.Rp = 220
+        self.Rm = rm
+        self.Rp = rp
         self.mat = mat
         self.t = t
         if modified_t:
             self.sign_tc = 1
         else:
             self.sign_tc = 0
-        self.Rz = 125
-        self.R = -1
+        self.Rz = rz
+        self.R = r
         self.j = j
-        self.j_0 = 1
-        self.S_pu = 2 / 3
+        self.j_0 = j_0
+        self.S_pu = s_pu
         self.gamma_M = gamma_m
         self.sigma_b = self.Rm * 1.06
         if self.mat == 'GGG':
             self.M = 0.00035 * self.sigma_b + 0.08
         else:
             self.M = 0.00035 * self.sigma_b + 0.05
-
         # Surface roughness factor
         F_o = (1 - 0.22 * (log10(self.Rz)**0.64) * log10(self.sigma_b) + 0.45 *
                (log10(self.Rz)**0.53))
@@ -73,20 +73,16 @@ class SnGL(object):
         n = 1
         belt_k = alpha_k / n
         F_ok = sqrt(belt_k**2 - 1 + 1 / (F_o**2))
-
         # Fatigue strength of specimen
         if self.mat == 'GGG':
             sigma_w = 0.27 * self.sigma_b + 100
         else:
             sigma_w = 0.27 * self.sigma_b + 85
-
         # Fatigue strength of component
         sigma_wk = sigma_w / F_ok
-
         # Slopes of SN curve m1 and m2
         self.m1 = 5.5 / (F_ok**2) + 6
         self.m2 = 2 * self.m1 - 1
-
         # Factor for influence of mean stress
         u = 1 / (self.M + 1) * sigma_wk / self.sigma_b
         a = (1 + self.R) / (1 - self.R) * sigma_wk / self.sigma_b
@@ -100,7 +96,6 @@ class SnGL(object):
             else:
                 Fm = -1 * (1 + p * a) / (2 * a**2 *(1 - p)) - \
                      sqrt(1 / (1 - p) / a**2 + ((1 + p * a) / 2 / a**2 / (1 - p))**2)
-
         # Stress amplitude at knee of SN curve
         sigma_A = sigma_wk * Fm
         # Number of load cycles at knee of SN curve
@@ -111,15 +106,22 @@ class SnGL(object):
         S = self.S_pu * S_d * S_t
         # Upgraded stress amplitude at knee of SN curve
         self.sigma_D = sigma_A * S / self.gamma_M
+        self.h1x = self.sigma_D - self.M * self.sigma_D / (
+            self.M - 1) - self.Rp / self.gamma_M
+        self.h2x = self.sigma_D / (self.M - 1)
+        self.h3x = (self.Rp - self.sigma_D) / (1 - self.M)
+        return
 
-    def para_save(self):
-        # Parameters saved to .txt file
-        sigma_1 = self.Rp * (1 - self.R) / self.gamma_M
-        N_e = 10**9
-        sigma_e = (self.N_D / N_e)**(1 / self.m2) * self.sigma_D
-        # Parameters of the haigh diagram
+    def para_save(self, filename='SN_Curve'):
+        """
+            save the parameters of basic sn curve and haigh diagram to .txt file.
+        Returns:
+            filename.txt file
+        """
+        filename = filename
+        # Parameters of the haigh diagram, pulse stress amplitude.
         sigma_p = self.sigma_D / (self.M + 1)
-        with open('SN_Curve.txt', 'w') as f:
+        with open('%s.txt' % filename, 'w') as f:
             f.write('Summary of the SN curve Parameter\n')
             f.write('*' * 30 + '\n')
             f.write('Material:\n%s\n' % self.mat)
@@ -318,25 +320,30 @@ class SnGL(object):
 
         return sorted(counts.items())
 
-    def mean_amplitude(self, mean_stress):
-        if mean_stress <= self.sigma_D - self.M * self.sigma_D / (
-                self.M - 1) - self.Rp / self.gamma_M:
-            sigma_d_m = mean_stress + self.Rp / self.gamma_M
-        elif mean_stress <= self.sigma_D / (self.M - 1):
-            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
-        elif mean_stress <= (self.Rp / self.gamma_M - self.sigma_D) / (1 -
-                                                                       self.M):
+    def factor_meanstress(self, mean_stress):
+        """
+            mean stress correction of the sn curve stress limit at knee point according to FKM.
+        Args:
+            mean_stress:
+        Returns:
+            modified factor: modified sigma_d/ self.sigma_D
+        """
+        if self.h2x <= mean_stress <= self.h3x:
             sigma_d_m = self.sigma_D - self.M * mean_stress
+        elif self.h1x <= mean_stress < self.h2x:
+            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
+        elif mean_stress < self.h1x:
+            sigma_d_m = mean_stress + self.Rp / self.gamma_M
         else:
-            sigma_d_m = self.Rp - (self.Rp / self.gamma_M -
-                                   self.sigma_D) / (1 - self.M)
-        return sigma_d_m
+            sigma_d_m = self.Rp / self.gamma_M - (self.Rp / self.gamma_M -
+                                                  self.sigma_D) / (1 - self.M)
+        return sigma_d_m / self.sigma_D
 
 
 if __name__ == '__main__':
     from numpy import loadtxt
     test = SnGL()
-    test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
-    test_counts = test.rainflow(test_data[:, 5], ndigits=2)
+    # test_data = loadtxt('/home/louis/Git/SN-curve/Data/load.txt')
+    # test_counts = test.rainflow(test_data[:, 5], ndigits=2)
     print(test.sigma_D)
-    print(test.mean_amplitude(20))
+    print(test.factor_meanstress(20))
