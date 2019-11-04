@@ -8,7 +8,8 @@
 @Software: PyCharm
 """
 from math import log10, sqrt
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+from xlrd import open_workbook
 
 
 class SnGL(object):
@@ -189,7 +190,8 @@ class SnGL(object):
         plt.show()
         return
 
-    def rainflow(self, series, ndigits=None, left=True, right=True):
+    @staticmethod
+    def rainflow(series, ndigits=None, left=True, right=True):
         """
         Count amplitude, mean and cycles in the series.
         Args:
@@ -345,18 +347,59 @@ class SnGL(object):
     def damage_s(self, amplitude, mean, count, ms_correction=True):
         sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
         if mean <= sigma_d:
-            damage = count / (self.N_D * (sigma_d/amplitude)**self.m1)
+            damage = count / (self.N_D * (sigma_d / amplitude)**self.m1)
         else:
-            damage = count / (self.N_D * (sigma_d/amplitude)**self.m2)
+            damage = count / (self.N_D * (sigma_d / amplitude)**self.m2)
         return damage
+
+    @staticmethod
+    def times_read(times_file):
+        """
+            Read the loc times from the xlsx file
+        Args:
+            times_file: excel file
+        Returns:
+            locs:
+            counts:
+        """
+        wb = open_workbook(times_file)
+        sheet = wb.sheet_by_index(0)
+        locs = sheet.col_values(1)[1:]
+        counts1 = sheet.col_values(7)[1:]
+        counts2 = sheet.col_values(3)[1:]
+        counts = [
+            counts1[i] if isinstance(counts1[i], float) else counts2[i]
+            for i in range(len(counts1))
+        ]
+        return locs, counts
 
 
 if __name__ == '__main__':
     from numpy import random
+    from numpy import loadtxt
+
+    import time
     test = SnGL()
-    print(test.sigma_D)
-    stress = random.randn(100000)*10
+
+    stress = random.randn(100000) * 10
     rf = test.rainflow(stress, ndigits=10)
-    D_Sum = []
-    for i in range(len(rf)):   
-        D_Sum.append(test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1]))
+    # D_Sum = []
+    
+    # for i in range(len(rf)):
+    #     d = test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1])
+    #     D_Sum.append(test.damage_s(rf[i][0][0], rf[i][0][1], rf[i][1]))
+
+
+    # load read test
+    i = 0
+    locs, counts = test.times_read('./Data/times.xlsx')
+    for loc in locs:
+        i += 1
+        start = time.time()
+        load = loadtxt(r'%s.txt' % loc, skiprows=2)[:,11]
+        markov = test.rainflow(load, ndigits=1)
+        end = time.time()
+        print('For load case %s, time spend %.2f s.' % (i, (end - start)))
+        
+    
+
