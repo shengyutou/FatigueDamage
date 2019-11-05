@@ -7,26 +7,31 @@
 @FileName: Fatigue_LouisW.py
 @Software: PyCharm
 """
-from math import log10, sqrt
-import matplotlib.pyplot as plt
-from xlrd import open_workbook
+
+from numpy import zeros, dot, array, hstack, delete
 
 
 class SnGL(object):
-    def __init__(self,
-                 mat='GGG',
-                 t=120,
-                 rm=360,
-                 rp=220,
-                 rz=125,
-                 r=-1,
-                 j_0=1,
-                 j=3,
-                 s_pu=2 / 3,
-                 gamma_m=1.265,
-                 modified_t=False):
+    """
+    Fatigue damage calculation according to GL2010 and FKM.
+    """
+
+    def __init__(
+        self,
+        mat="GGG",
+        t=120,
+        rm=360,
+        rp=220,
+        rz=125,
+        r=-1,
+        j_0=1,
+        j=3,
+        s_pu=2 / 3,
+        gamma_m=1.265,
+        modified_t=False,
+    ):
         """
-        Calculation of the basic SN curve parameters according to GL2010 Fig.5.B.3.
+            Basic SN curve parameters calculation according to GL2010 Fig.5.B.3.
         Args:
             mat: {str} material type. GGG for cast iron.
             rm: {float} Strength of tension. /MPa
@@ -48,6 +53,8 @@ class SnGL(object):
             sigma_D: {float} stress amplitude at the knee point
             N_D: {float} cycle number of the knee point
         """
+        from math import log10, sqrt
+
         self.Rm = rm
         self.Rp = rp
         self.mat = mat
@@ -63,146 +70,323 @@ class SnGL(object):
         self.S_pu = s_pu
         self.gamma_M = gamma_m
         self.sigma_b = self.Rm * 1.06
-        if self.mat == 'GGG':
+        if self.mat == "GGG":
             self.M = 0.00035 * self.sigma_b + 0.08
         else:
             self.M = 0.00035 * self.sigma_b + 0.05
         # Surface roughness factor
-        F_o = (1 - 0.22 * (log10(self.Rz)**0.64) * log10(self.sigma_b) + 0.45 *
-               (log10(self.Rz)**0.53))
+        F_o = (
+            1
+            - 0.22 * (log10(self.Rz) ** 0.64) * log10(self.sigma_b)
+            + 0.45 * (log10(self.Rz) ** 0.53)
+        )
+        # Notch factor and reduction factor
         alpha_k = 1
         n = 1
         belt_k = alpha_k / n
-        F_ok = sqrt(belt_k**2 - 1 + 1 / (F_o**2))
+        F_ok = sqrt(belt_k ** 2 - 1 + 1 / (F_o ** 2))
         # Fatigue strength of specimen
-        if self.mat == 'GGG':
+        if self.mat == "GGG":
             sigma_w = 0.27 * self.sigma_b + 100
         else:
             sigma_w = 0.27 * self.sigma_b + 85
         # Fatigue strength of component
         sigma_wk = sigma_w / F_ok
         # Slopes of SN curve m1 and m2
-        self.m1 = 5.5 / (F_ok**2) + 6
+        self.m1 = 5.5 / (F_ok ** 2) + 6
         self.m2 = 2 * self.m1 - 1
-        # Factor for influence of mean stress
-        u = 1 / (self.M + 1) * sigma_wk / self.sigma_b
-        a = (1 + self.R) / (1 - self.R) * sigma_wk / self.sigma_b
-        p = (1 / (self.M + 1) - 1 + u**2) / (u**2 - u)
-        if a == 0:
+        # Factor for influence of mean stress. if R == -1: M = 1.
+
+        if self.R == -1:
             Fm = 1
         else:
+            a = (1 + self.R) / (1 - self.R) * sigma_wk / self.sigma_b
+            u = 1 / (self.M + 1) * sigma_wk / self.sigma_b
+            p = (1 / (self.M + 1) - 1 + u ** 2) / (u ** 2 - u)
             if p <= 1:
-                Fm = -1 * (1 + p * a) / (2 * a**2 * (1 - p)) + \
-                     sqrt(1 / (1 - p) / a**2 + ((1 + p * a) / 2 / a**2 / (1 - p))**2)
+                Fm = -1 * (1 + p * a) / (2 * a ** 2 * (1 - p)) + sqrt(
+                    1 / (1 - p) / a ** 2 + ((1 + p * a) / 2 / a ** 2 / (1 - p)) ** 2
+                )
             else:
-                Fm = -1 * (1 + p * a) / (2 * a**2 *(1 - p)) - \
-                     sqrt(1 / (1 - p) / a**2 + ((1 + p * a) / 2 / a**2 / (1 - p))**2)
+                Fm = -1 * (1 + p * a) / (2 * a ** 2 * (1 - p)) - sqrt(
+                    1 / (1 - p) / a ** 2 + ((1 + p * a) / 2 / a ** 2 / (1 - p)) ** 2
+                )
         # Stress amplitude at knee of SN curve
-        sigma_A = sigma_wk * Fm
+        sigma_kn = sigma_wk * Fm
         # Number of load cycles at knee of SN curve
-        self.N_D = 10**(6.8 - 3.6 * (1 / self.m1))
+        self.N_D = 10 ** (6.8 - 3.6 * (1 / self.m1))
         # Upgrading factors
-        S_d = 0.85**(self.j - self.j_0)
-        S_t = (self.t / 25)**((-0.15) * self.sign_tc)
+        S_d = 0.85 ** (self.j - self.j_0)
+        S_t = (self.t / 25) ** ((-0.15) * self.sign_tc)
         S = self.S_pu * S_d * S_t
         # Upgraded stress amplitude at knee of SN curve
-        self.sigma_D = sigma_A * S / self.gamma_M
-        self.h1x = self.sigma_D - self.M * self.sigma_D / (
-            self.M - 1) - self.Rp / self.gamma_M
+        self.sigma_D = sigma_kn * S / self.gamma_M
+        # Inflection point of the haigh diagram
+        self.h1x = (
+            self.sigma_D - self.M * self.sigma_D / (self.M - 1) - self.Rp / self.gamma_M
+        )
         self.h2x = self.sigma_D / (self.M - 1)
         self.h3x = (self.Rp - self.sigma_D) / (1 - self.M)
+
         return
 
-    def para_save(self, filename='SN_Curve'):
+    def para_save(self, fname="SN_Curve"):
         """
             save the parameters of basic sn curve and haigh diagram to .txt file.
+        Args:
+            fname: name of the file to be saved.
         Returns:
             filename.txt file
         """
-        filename = filename
+        filename = fname
         # Parameters of the haigh diagram, pulse stress amplitude.
         sigma_p = self.sigma_D / (self.M + 1)
-        with open('%s.txt' % filename, 'w') as f:
-            f.write('Summary of the SN curve Parameter\n')
-            f.write('*' * 30 + '\n')
-            f.write('Material:\n%s\n' % self.mat)
-            f.write('Stress ratio R:\n%s\n' % self.R)
-            f.write('*' * 30 + '\n')
+        with open("%s.txt" % filename, "w") as f:
+            f.write("Summary of the SN curve Parameter\n")
+            f.write("*" * 30 + "\n")
+            f.write("Material:\n%s\n" % self.mat)
+            f.write("Stress ratio R:\n%s\n" % self.R)
+            f.write("*" * 30 + "\n")
             f.write(
-                'Calculation of SN curve according to the GL2010 5.B.3.1 and 5.B.3.2.\n'
+                "Calculation of SN curve according to the GL2010 5.B.3.1 and 5.B.3.2.\n"
             )
-            f.write('*' * 30 + '\n')
-            f.write('Tensile strength:\n')
-            f.write('%s\n' % self.Rm)
-            f.write('Yield Strength:\n')
-            f.write('%s\n' % self.Rp)
-            f.write('Alternating stress limit (Amplitude/Range):\n')
-            f.write('%.2f/%.2f\n' % (self.sigma_D, 2 * self.sigma_D))
-            f.write('Pulsating stress limit (Amplitude/Range):\n')
-            f.write('%.2f/%.2f\n' % (sigma_p, 2 * sigma_p))
-            f.write('Slope of the SN curve (Left/Right of the knee point):\n')
-            f.write('%.2f/%.2f\n' % (self.m1, self.m2))
-            f.write('Number of load cycles at knee of SN curve:\n')
-            f.write('%.2e\n' % self.N_D)
-            f.write('Mean stress sensitivity:\n')
-            f.write('%.3f\n' % self.M)
-            f.write('*' * 30 + '\n')
-            f.write('Parameter of the Haigh Diagram:\n')
-            f.write('*' * 30 + '\n')
-            f.write('Mean stress / Amplitude:\n')
-            f.write('%11.2f/%11d\n' % ((self.Rp / self.gamma_M), 0))
-            if self.mat == 'GGG':
-                f.write('%11.2f/%11.2f\n' %
-                        ((self.Rp / self.gamma_M - self.sigma_D) /
-                         (1 - self.M), self.M *
-                         (self.Rp / self.gamma_M - self.sigma_D) /
-                         (self.M - 1) + self.sigma_D))
+            f.write("*" * 30 + "\n")
+            f.write("Tensile strength:\n")
+            f.write("%s\n" % self.Rm)
+            f.write("Yield Strength:\n")
+            f.write("%s\n" % self.Rp)
+            f.write("Alternating stress limit (Amplitude/Range):\n")
+            f.write("%.2f/%.2f\n" % (self.sigma_D, 2 * self.sigma_D))
+            f.write("Pulsating stress limit (Amplitude/Range):\n")
+            f.write("%.2f/%.2f\n" % (sigma_p, 2 * sigma_p))
+            f.write("Slope of the SN curve (Left/Right of the knee point):\n")
+            f.write("%.2f/%.2f\n" % (self.m1, self.m2))
+            f.write("Number of load cycles at knee of SN curve:\n")
+            f.write("%.2e\n" % self.N_D)
+            f.write("Mean stress sensitivity:\n")
+            f.write("%.3f\n" % self.M)
+            f.write("*" * 30 + "\n")
+            f.write("Parameter of the Haigh Diagram:\n")
+            f.write("*" * 30 + "\n")
+            f.write("Mean stress / Amplitude:\n")
+            f.write("%11.2f/%11d\n" % ((self.Rp / self.gamma_M), 0))
+            if self.mat == "GGG":
+                f.write(
+                    "%11.2f/%11.2f\n"
+                    % (
+                        (self.Rp / self.gamma_M - self.sigma_D) / (1 - self.M),
+                        self.M * (self.Rp / self.gamma_M - self.sigma_D) / (self.M - 1)
+                        + self.sigma_D,
+                    )
+                )
             else:
                 f.write("")
-            f.write('%11.2f/%11.2f\n' % (sigma_p, sigma_p))
-            f.write('%11d/%11.2f\n' % (0, self.sigma_D))
-            f.write('%11.2f/%11.2f\n' %
-                    (self.sigma_D / (self.M - 1), -self.sigma_D /
-                     (self.M - 1)))
-            f.write('%11.2f/%11d\n' % ((-self.Rp / self.gamma_M), 0))
-            f.close()
+            f.write("%11.2f/%11.2f\n" % (sigma_p, sigma_p))
+            f.write("%11d/%11.2f\n" % (0, self.sigma_D))
+            f.write(
+                "%11.2f/%11.2f\n"
+                % (self.sigma_D / (self.M - 1), -self.sigma_D / (self.M - 1))
+            )
+            f.write("%11.2f/%11d\n" % ((-self.Rp / self.gamma_M), 0))
         return
 
     def sn_plot(self):
+        """
+            plot the basic SN curve
+        Returns:
+
+        """
+        import matplotlib.pyplot as plt
+
         # Plot of the basic SN curve according to GL2010
         sigma_1 = self.Rp * (1 - self.R) / self.gamma_M
         # Number of load cycles at upper fatigue limit
-        N_1 = self.N_D * (2 * self.sigma_D / sigma_1)**self.m1
-        N_e = 10**9
-        sigma_e = (self.N_D / N_e)**(1 / self.m2) * self.sigma_D
+        N_1 = self.N_D * (2 * self.sigma_D / sigma_1) ** self.m1
+        N_e = 10 ** 9
+        sigma_e = (self.N_D / N_e) ** (1 / self.m2) * self.sigma_D
         x = [0, N_1, self.N_D, N_e]
         y = [sigma_1, sigma_1, self.sigma_D, sigma_e]
-        plt.loglog(x, y, lw=2, marker='*')
-        plt.xlabel('Cycle Numbers')
-        plt.ylabel('Stress Amplitude/MPa')
-        plt.xlim(10, 10**9)
+        plt.loglog(x, y, lw=2, marker="*")
+        plt.xlabel("Cycle Numbers")
+        plt.ylabel("Stress Amplitude/MPa")
+        plt.xlim(10, 10 ** 9)
         plt.yticks([10, 100, 1000])
-        plt.annotate(s='(%.2e,%.2f)' % (N_1, sigma_1), xy=(N_1, sigma_1))
-        plt.annotate(s='(%.2e,%.2f)' % (self.N_D, self.sigma_D),
-                     xy=(self.N_D, self.sigma_D))
-        plt.annotate(s='m1=%.2f' % self.m1, xy=(10**3, 142))
-        plt.annotate(s='m2=%.2f' % self.m2, xy=(10**7, 40))
+        plt.annotate(s="(%.2e,%.2f)" % (N_1, sigma_1), xy=(N_1, sigma_1))
+        plt.annotate(
+            s="(%.2e,%.2f)" % (self.N_D, self.sigma_D), xy=(self.N_D, self.sigma_D)
+        )
+        plt.annotate(s="m1=%.2f" % self.m1, xy=(10 ** 3, 142))
+        plt.annotate(s="m2=%.2f" % self.m2, xy=(10 ** 7, 40))
         plt.show()
         return
 
-    @staticmethod
-    def rainflow(series, ndigits=None, left=True, right=True):
+    def factor_ms(self, mean_stress, ms_correction=True):
         """
-        Count amplitude, mean and cycles in the series.
+            mean stress correction factor of the sn curve stress limit at knee point according to FKM.
+
         Args:
-            series: iterable sequence of numbers
-            ndigits: int, optional. Round cycle magnitudes to the given number of digits before counting.
-            left: bool, optional. If True, treat the first point in the series as a reversal.
-            right: bool, optional. If True, treat the last point in the series as a reversal.
+            mean_stress: {float} mean stress
+            ms_correction: {Bool} mean stress correction.
+
         Returns:
-            A sorted list containing pairs of cycle magnitude, mean and count.
-             One-half cycles are counted as 0.5, so the returned counts may not be whole numbers.
+            correction factor: sigma_d/ self.sigma_D
+
         """
+        if not ms_correction:
+            return 1
+        if self.h2x <= mean_stress <= self.h3x:
+            sigma_d_m = self.sigma_D - self.M * mean_stress
+        elif self.h1x <= mean_stress < self.h2x:
+            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
+        elif mean_stress < self.h1x:
+            sigma_d_m = mean_stress + self.Rp / self.gamma_M
+        else:
+            sigma_d_m = self.Rp / self.gamma_M - (
+                self.Rp / self.gamma_M - self.sigma_D
+            ) / (1 - self.M)
+        return sigma_d_m / self.sigma_D
+
+    def damage_s(self, amplitude, mean, count, ms_correction=True):
+        """
+            Damage accumulation
+        Args:
+            amplitude:
+            mean:
+            count:
+            ms_correction:
+
+        Returns:
+            Damage
+        """
+        sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
+        if mean <= sigma_d:
+            damage = count / (self.N_D * (sigma_d / amplitude) ** self.m1)
+        else:
+            damage = count / (self.N_D * (sigma_d / amplitude) ** self.m2)
+        return damage
+
+    @staticmethod
+    def times_read(times_file):
+        """
+            Read the loc times from the xlsx file.
+        Args:
+            times_file: excel file.
+        Returns:
+            loc_counts: {dict} key: load case name. value: counts.
+        """
+        from xlrd import open_workbook
+
+        sheet = open_workbook(times_file).sheet_by_index(0)
+        locsv = sheet.col_values(1)[1:]
+        loc_count = {}
+        for key, locn in enumerate(locsv):
+            if isinstance(sheet.col_values(7)[key + 1], float):
+                loc_count[locn] = sheet.col_values(7)[key + 1] * 3600 / 600 * 20
+            else:
+                loc_count[locn] = sheet.col_values(3)[key + 1]
+        return loc_count
+
+    @staticmethod
+    def unit_stress(unit_file, load_num):
+        """
+            Read the unit load result and combined into a array according to VENSYS file type.
+
+        Args:
+            unit_file: unit load file location.
+            load_num: number of the unit load result files
+
+        Returns:
+            ele_nd: {array} node number and stress component under unit load. /Nm-MPa
+
+        """
+
+        ele_nd = []
+        for i in range(load_num):
+            ele_s = []
+            with open(r"%s/Sxyz_LF_%s.txt" % (unit_file, i + 1)) as f:
+                line = f.readline()
+                while line:
+                    try:
+                        ele_s.append(
+                            [
+                                float(line[:8]),
+                                float(line[8:22]),
+                                float(line[22:35]),
+                                float(line[35:]),
+                            ]
+                        )
+                        line = f.readline()
+                    except:
+                        line = f.readline()
+                try:
+                    ele_nd = hstack((ele_nd, delete(array(ele_s), 0, 1)))
+                except:
+                    ele_nd = array(ele_s)
+        return ele_nd
+
+    @staticmethod
+    def stress_combine(load_file, unit_load_file, s_method="max_principle"):
+        """
+            Stress combination according to the method used to calculate the fatigue damage.
+
+        Args:
+            load_file: time series load.
+            unit_load_file: unit load result.
+            s_method: the method used to calculate the fatigue damage.
+
+        Returns:
+            time series stress.
+
+        """
+
+        loadnum = int((len(unit_load_file) - 1) / 3)
+        unit_load_file = unit_load_file.reshape([1, len(unit_load_file)])
+        stress_s = {}
+
+        for key in load_file:
+            locnum = int(len(load_file[key]))
+            stress_s[key] = zeros([locnum, 3])
+            load_cal = (
+                hstack((hstack((load_file[key], load_file[key])), load_file[key]))
+                * 1000
+            )
+
+            for i in range(int(loadnum)):
+                stress_s[key] += dot(
+                    load_cal[:, i].reshape([locnum, 1]),
+                    unit_load_file[0, 3 * i + 1 : 3 * i + 4].reshape(1, 3),
+                )
+            if s_method == "max_principle":
+                stress_s[key] = (stress_s[key][:, 0] + stress_s[key][:, 1]).reshape(
+                    [locnum, 1]
+                ) / 2 + (
+                    (stress_s[key][:, 0] - stress_s[key][:, 1]).reshape([locnum, 1])
+                    ** 2
+                    / 4
+                    + stress_s[key][:, 2].reshape([locnum, 1]) ** 2
+                ) ** (
+                    1 / 2
+                )
+        return stress_s
+
+    @staticmethod
+    def ranflow(series, ndigits=None, left=True, right=True):
+        """Count cycles in the series.
+            Parameters
+            ----------
+                series : iterable sequence of numbers
+                ndigits : int, optional
+                    Round cycle magnitudes to the given number of digits before counting.
+                left: bool, optional
+                    If True, treat the first point in the series as a reversal.
+                right: bool, optional
+                    If True, treat the last point in the series as a reversal.
+            Returns
+            -------
+                A sorted list containing pairs of cycle magnitude and count.
+                One-half cycles are counted as 0.5, so the returned counts may not be
+                whole numbers.
+            """
         from collections import deque, defaultdict
         import functools
 
@@ -211,6 +395,7 @@ class SnGL(object):
 
                 def func(x):
                     return x
+
             else:
 
                 def func(x):
@@ -218,7 +403,7 @@ class SnGL(object):
 
             return func
 
-        def reversals(seriesr, left=False, right=False):
+        def reversals(series, left=False, right=False):
             """Iterate reversal points in the series.
             A reversal point is a point in the series at which the first derivative
             changes sign. Reversal is undefined at the first (last) point because the
@@ -227,7 +412,7 @@ class SnGL(object):
             `left` and `right` to True.
             Parameters
             ----------
-            seriesr : iterable sequence of numbers
+            series : iterable sequence of numbers
             left: bool, optional
                 If True, yield the first point in the series (treat it as a reversal).
             right: bool, optional
@@ -237,14 +422,14 @@ class SnGL(object):
             float
                 Reversal points.
             """
-            seriesr = iter(seriesr)
+            series = iter(series)
 
-            x_last, x = next(seriesr), next(seriesr)
-            d_last = (x - x_last)
+            x_last, x = next(series), next(series)
+            d_last = x - x_last
 
             if left:
                 yield x_last
-            for x_next in seriesr:
+            for x_next in series:
                 if x_next == x:
                     continue
                 d_next = x_next - x
@@ -256,8 +441,8 @@ class SnGL(object):
                 yield x_next
 
         def _sort_lows_and_highs(func):
-            """Decorator for extract_cycles
-            """
+            "Decorator for extract_cycles"
+
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 for low, high, mult in func(*args, **kwargs):
@@ -270,15 +455,17 @@ class SnGL(object):
 
         @_sort_lows_and_highs
         def extract_cycles(series, left=False, right=False):
-            """
-            Iterate cycles in the series.
-            Args:
-                series:
-                left:
-                right:
-
-            Returns:
-                cycle : tuple
+            """Iterate cycles in the series.
+            Parameters
+            ----------
+            series : iterable sequence of numbers
+            left: bool, optional
+                If True, treat the first point in the series as a reversal.
+            right: bool, optional
+                If True, treat the last point in the series as a reversal.
+            Yields
+            ------
+            cycle : tuple
                 Each tuple contains three floats (low, high, mult), where low and high
                 define cycle amplitude and mult equals to 1.0 for full cycles and 0.5
                 for half cycles.
@@ -315,136 +502,52 @@ class SnGL(object):
 
         counts = defaultdict(float)
         round_ = _get_round_function(ndigits)
+
         for low, high, mult in extract_cycles(series, left=left, right=right):
             delta = round_(abs(high - low))
-            mean = round_((high + low) / 2)
+            mean = round_((high - low) / 2)
             counts[(delta, mean)] += mult
-
         return sorted(counts.items())
 
-    def factor_ms(self, mean_stress, ms_correction):
-        """
-            mean stress correction of the sn curve stress limit at knee point according to FKM.
-        Args:
-            mean_stress:
-            ms_correction: {Bool} mean stress correction.
-        Returns:
-            correction factor: sigma_d/ self.sigma_D
-        """
-        if not ms_correction:
-            return 1
-        if self.h2x <= mean_stress <= self.h3x:
-            sigma_d_m = self.sigma_D - self.M * mean_stress
-        elif self.h1x <= mean_stress < self.h2x:
-            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
-        elif mean_stress < self.h1x:
-            sigma_d_m = mean_stress + self.Rp / self.gamma_M
-        else:
-            sigma_d_m = self.Rp / self.gamma_M - (self.Rp / self.gamma_M -
-                                                  self.sigma_D) / (1 - self.M)
-        return sigma_d_m / self.sigma_D
 
-    def damage_s(self, amplitude, mean, count, ms_correction=True):
-        sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
-        if mean <= sigma_d:
-            damage = count / (self.N_D * (sigma_d / amplitude)**self.m1)
-        else:
-            damage = count / (self.N_D * (sigma_d / amplitude)**self.m2)
-        return damage
-
-    @staticmethod
-    def times_read(times_file):
-        """
-            Read the loc times from the xlsx file
-        Args:
-            times_file: excel file
-        Returns:
-            locs:
-            counts:
-        """
-        wb = open_workbook(times_file)
-        sheet = wb.sheet_by_index(0)
-        locs = sheet.col_values(1)[1:]
-        counts1 = sheet.col_values(7)[1:]
-        counts2 = sheet.col_values(3)[1:]
-        count_loc = [
-            counts1[j] if isinstance(counts1[j], float) else counts2[j]
-            for j in range(len(counts1))
-        ]
-        return locs, count_loc
-
-    @staticmethod
-    def unit_stress(unit_file, load_num):
-        from numpy import array, hstack, delete
-        ele_nd = []
-        for i in range(load_num):
-            ele_s = []
-            with open(r'%s/Sxyz_LF_%s.txt' % (unit_file, i + 1)) as f:
-                line = f.readline()
-                while line:
-                    try:
-                        ele_s.append([
-                            float(line[:9]),
-                            float(line[10:21]),
-                            float(line[22:35]),
-                            float(line[36:-1])
-                        ])
-                        line = f.readline()
-                    except:
-                        line = f.readline()
-                try:
-                    ele_nd = hstack((ele_nd, delete(array(ele_s), 0, 1)))
-                except:
-                    ele_nd = array(ele_s)
-        return ele_nd
-
-    def stress_combine(self, load_file, unit_load_file, load_num):
-
-        return
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     import time
     from numpy import loadtxt
 
+    # Fatigue damage calculation function
     test = SnGL()
-    # load read test
-    # i = 0
-    # locs, counts = test.times_read('./Data/times.xlsx')
-    # D = []
-    # start = time.time()
-    # for loc in locs:
-    #     i += 1
-    #
-    #     load = loadtxt(r'%s.txt' % loc, skiprows=2)[:, 1]
-    #     markov = test.rainflow(load, ndigits=2)
-    #     d = 0
-    #     for lis in markov:
-    #         d += test.damage_s(lis[0][0], lis[0][1], lis[1])
-    #     D.append(d)
-    # end = time.time()
-    # print('Time spend %.2f s.' % (end - start))
 
     # read the unit load result
     start = time.time()
-    unit_load_result = test.unit_stress('./Factor', 15)
+    unit_load_result = test.unit_stress("./Factor", 15)
     end = time.time()
-    print('Unit load result read. Time spend %.2f s.' % (end - start))
+    print("Unit load result read. Time spend %.2fs." % (end - start))
 
-    # load case location and occur times read, and rainflow
+    # read time series load
     start = time.time()
-    loc, count = test.times_read('./Data/times.xlsx')
+    loc_count = test.times_read("./Data/times.xlsx")
     load_all = {}
-    for loc in loc:
-        load_all[loc.split('\\')[-1]] = loadtxt(r'%s.txt' % loc, skiprows=2)[:, -6:-1]
+    for loc in loc_count:
+        # unit for time series load is KNm
+        load_all[loc.split("/")[-1]] = loadtxt(r"%s.txt" % loc, skiprows=2)[:, -6:-1]
     end = time.time()
-    print('Time series load read spend %.2f s.' % (end - start))
-    
-    # time series stress combination
-    for node in unit_load_result[0, 0]:
-        times_s = stress_combine()
-        
-    
+    print("Time series load read spend %.2fs." % (end - start))
+
+    # time series stress combination, rainflow and fatigue damage calculation.
+    start = time.time()
+    for nodeid, node in enumerate(unit_load_result[:200, 0]):
+        stress_s = test.stress_combine(
+            load_all, unit_load_result[nodeid, :], s_method="max_principle"
+        )
+        for key in stress_s:
+            a = test.ranflow(stress_s[key].ravel(), ndigits=1)
+        if nodeid % 10 == 0:
+            print("%s/%s" % (nodeid, len(unit_load_result)))
+            end = time.time()
+            print("Time series stress combine spend %.2fs." % (end - start))
+            start = time.time()
+    #
+
     #     markov = test.rainflow(load, ndigits=2)
     #     d = 0
     #     for lis in markov:
