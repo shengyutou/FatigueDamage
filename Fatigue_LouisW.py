@@ -331,29 +331,32 @@ class SnGL(object):
 
         """
 
-        loadnum = int((len(unit_load_file) - 1) / 3)
+        loadnum = int(len(unit_load_file) / 3)
         unit_load_file = unit_load_file.reshape([1, len(unit_load_file)])
-        stress_s = {}
+        stress_c = {}
+        stress_r = {}
 
         for key in load_file:
             locnum = int(len(load_file[key]))
-            stress_s[key] = zeros([locnum, 3])
-            load_cal = (hstack((hstack(
-                (load_file[key], load_file[key])), load_file[key])) * 1000)
+            stress_c[key] = zeros([locnum, 3])
+            load_cal = hstack((hstack(
+                (load_file[key], load_file[key])), load_file[key])) * 1000
 
-            for i in range(int(loadnum)):
-                stress_s[key] += dot(
+            for i in range(loadnum):
+                stress_c[key] += dot(
                     load_cal[:, i].reshape([locnum, 1]),
-                    unit_load_file[0, 3 * i + 1:3 * i + 4].reshape(1, 3),
+                    unit_load_file[0, 3 * i:3 * i + 3].reshape(1, 3)
                 )
             if s_method == "max_principle":
-                stress_s[key] = (
-                    stress_s[key][:, 0] +
-                    stress_s[key][:, 1]).reshape([locnum, 1]) / 2 + (
-                        (stress_s[key][:, 0] - stress_s[key][:, 1]).reshape(
+                stress_r[key] = (
+                    stress_c[key][:, 0] +
+                    stress_c[key][:, 1]).reshape([locnum, 1]) / 2 + (
+                        (stress_c[key][:, 0] - stress_c[key][:, 1]).reshape(
                             [locnum, 1])**2 / 4 +
-                        stress_s[key][:, 2].reshape([locnum, 1])**2)**(1 / 2)
-        return stress_s
+                        stress_c[key][:, 2].reshape([locnum, 1])**2)**(1 / 2)
+            else:
+                stress_r[key] = stress_c[key][:, 0].reshape([locnum, 1])
+        return stress_r
 
     @staticmethod
     def ranflow(series, ndigits=None, left=True, right=True):
@@ -521,9 +524,9 @@ if __name__ == "__main__":
     locs_count = {}
     for loc in loc_count:
         # unit for time series load is KNm
-        load_all[loc.split("\\")[-1]] = loadtxt(r"%s.txt" % loc,
+        load_all[loc.split("/")[-1]] = loadtxt(r"%s.txt" % loc,
                                                 skiprows=2)[:, -6:-1]
-        locs_count[loc.split("\\")[-1]] = loc_count[loc]
+        locs_count[loc.split("/")[-1]] = loc_count[loc]
     end = time.time()
     print("Reading time series load finish. Time: %.2fs." % (end - start))
 
@@ -533,24 +536,24 @@ if __name__ == "__main__":
     # Dataframe to save the fatigue damage
     D_Details = DataFrame(zeros([len(load_all),
                                  len(unit_load_result)]),
-                          columns=unit_load_result[:, 0],
+                          columns=unit_load_result.keys(),
                           index=load_all.keys())
-
-    for nodeid, node in enumerate(unit_load_result[0:20, 0]):
-        print(nodeid,node)
+    count_node = 1
+    for node in list(unit_load_result.keys())[16:17]:
         stress_s = test.stress_combine(load_all,
-                                       unit_load_result[nodeid, :],
-                                       s_method="max_principle")
+                                       unit_load_result[node],
+                                       s_method="1")
         for key in stress_s:
             markov = test.ranflow(stress_s[key].ravel(), ndigits=0)
             for i in markov:
                 D_Details.loc[key, node] += test.damage_s(
                     i[0][0], i[0][1], i[1]) * locs_count[key]
 
-        if nodeid % 10 == 0:
+        if count_node % 10 == 0:
             end = time.time()
             print("%s/%s node damage calculation finish. Time: %.2fs." %
-                  (nodeid, len(unit_load_result), (end - start)))
+                  (count_node, len(unit_load_result), (end - start)))
             start = time.time()
+        count_node += 1
     D_Sum = D_Details.apply(sum)
 
