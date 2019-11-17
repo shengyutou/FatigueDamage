@@ -7,5 +7,5 @@ The whole program is based on the hub fatigue damage calculation process. The ti
 
 2019/11/17
 
-For the fatigue damage accumulation, only mean stress influence on the Sigma_D considered. The Haigh diagram si used for this mean stress correction.
+For the fatigue damage accumulation, only mean stress influence on the Sigma_D considered. The Haigh diagram is used for the mean stress correction.
 ![image](https://github.com/pinginf/FatigueDamage/blob/master/Images/Haigh%20diagram.bmp)
