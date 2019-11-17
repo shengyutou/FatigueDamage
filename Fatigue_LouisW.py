@@ -8,7 +8,7 @@
 @Software: PyCharm
 """
 
-from numpy import zeros, dot, array, hstack, delete, loadtxt, around
+from numpy import empty, dot, array, hstack, delete, loadtxt, around
 from scipy.signal import butter, filtfilt
 from xlrd import open_workbook
 from collections import deque, defaultdict
@@ -260,42 +260,48 @@ def stress_combine(ts_load, unit_load, d_method="max_principle"):
         Stress combination according to the method used to calculate the fatigue damage.
 
     Args:
-        ts_load: time series load.
-        unit_load: unit load result.
+        ts_load: time series load. KN-KNm
+        unit_load: unit load result. MPa-N
         d_method: the method used to calculate the fatigue damage.
 
     Returns:
         time series stress.
 
     """
-
-    load_num = int(len(unit_load) / 3)
     unit_load_file = unit_load.reshape([1, len(unit_load)])
     stress_c = {}
     stress_r = {}
 
-    for key in ts_load:
-        locnum = int(len(ts_load[key]))
-        stress_c[key] = zeros([locnum, 3])
-        load_cal = hstack((hstack((ts_load[key], ts_load[key])), ts_load[key])) * 1000
-
-        for i in range(load_num):
-            stress_c[key] += dot(
-                load_cal[:, i].reshape([locnum, 1]),
-                unit_load_file[0, 3 * i : 3 * i + 3].reshape(1, 3),
+    for key_load in ts_load:
+        loc_num = int(len(ts_load[key_load][0]))
+        stress_c[key_load.split('\\')[-1]] = empty([loc_num, 3])
+        # Expend the blade root load to three blade roots load.
+        load_cal = (
+            hstack((hstack((ts_load[key_load][0], ts_load[key_load][0])), ts_load[key_load][0]))
+            * 1000
+        )
+        key_load = key_load.split('\\')[-1]
+        for i_load in range(int(len(unit_load) / 3)):
+            stress_c[key_load] += dot(
+                load_cal[:, i_load].reshape([loc_num, 1]),
+                unit_load_file[0, 3 * i_load: 3 * i_load + 3].reshape(1, 3),
             )
         if d_method == "max_principle":
-            stress_r[key] = (stress_c[key][:, 0] + stress_c[key][:, 1]).reshape(
-                [locnum, 1]
-            ) / 2 + (
-                (stress_c[key][:, 0] - stress_c[key][:, 1]).reshape([locnum, 1]) ** 2
+            stress_r[key_load] = (
+                stress_c[key_load][:, 0] + stress_c[key_load][:, 1]
+            ).reshape([loc_num, 1]) / 2 + (
+                (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]).reshape(
+                    [loc_num, 1]
+                )
+                ** 2
                 / 4
-                + stress_c[key][:, 2].reshape([locnum, 1]) ** 2
+                + stress_c[key_load][:, 2].reshape([loc_num, 1]) ** 2
             ) ** (
                 1 / 2
             )
         else:
-            stress_r[key] = stress_c[key][:, 0].reshape([locnum, 1])
+            # More function/fatigue damage accumulation hypothesis will be added in the future
+            stress_r[key_load] = stress_c[key_load][:, 4].reshape([loc_num, 1])
     return stress_r
 
 
@@ -483,8 +489,6 @@ class FatigueFKM(object):
     def sn_plot(self):
         """
 			plot the basic SN curve
-		Returns:
-
 		"""
         import matplotlib.pyplot as plt
 
@@ -520,7 +524,6 @@ class FatigueFKM(object):
 
 		Returns:
 			correction factor: sigma_d/ self.sigma_D
-
 		"""
         if not ms_correction:
             return 1
@@ -581,16 +584,18 @@ if __name__ == "__main__":
     start = time.time()
 
     # Dataframe to save the fatigue damage
+    print("Initialization of the fatigue damage dataframe……")
     D_Details = DataFrame(
-        zeros([len(load_all), len(unit_load_result)]),
+        empty([len(load_all), len(unit_load_result)]),
         columns=unit_load_result.keys(),
         index=[loc_name.split("\\")[-1] for loc_name in list(load_all.keys())],
     )
+    print("Start calculating for fatigue damage……")
     count_node = 1
     for node in list(unit_load_result.keys())[:1]:
-        stress_h = test.stress_combine(load_all, unit_load_result[node], s_method="1")
+        stress_h = stress_combine(load_all, unit_load_result[node])
         for key in stress_h:
-            markov = test.ranflow(stress_h[key].ravel(), ndigits=0)
+            markov = rainflow(stress_h[key].ravel())
             for i in markov:
                 D_Details.loc[key, node] += (
                     test.damage_s(i[0][0], i[0][1], i[1]) * locs_count[key]
