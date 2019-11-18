@@ -13,28 +13,10 @@ from scipy.signal import butter, filtfilt
 from xlrd import open_workbook
 from collections import deque, defaultdict
 import functools
+import threading
 
 
-def signal_filter(data, order=8, cutoff=0.3):
-    """
-    Digital filtering of the input data (low pass).
-    Signal frequency fs<2Hz fow wind load.
-    Sampling frequency fm=20Hz for vensys, which is 50Hz for goldwind.
-    Cut off frequency fc=3Hz.
-    Args:
-        data: {ndarray} Input date containing the time series load
-        order: {int} Order of signal filter.
-        cutoff: {float}  By default is 0.3 = 2*fc/fm for vensys.
-
-    Returns:
-        Signal after filtered.
-
-    """
-    b, a = butter(order, cutoff)
-    return array([filtfilt(b, a, data[:, ifl]) for ifl in range(data.shape[1])]).T
-
-
-def loads_read(file_loc, ndigits=1, tf_filter=True):
+def loads_read(file_loc):
     """
     Reading the time series loads.
     This function in only support for the vensys load file type now. Support for goldwind load file type will added in
@@ -42,53 +24,26 @@ def loads_read(file_loc, ndigits=1, tf_filter=True):
 
     Args:
         file_loc: {str} File location of the load case occurrences numbers. xlsx file.
-        ndigits: {int} Number of decimal places to round to (default: 2).
-        tf_filter: {bool} Load signal filtering. detail parameters described in signal_filter function.
 
     Returns:
-        loc_save: {dic} Dictionary containing load data and number of occurrences.
-            {load location{str}: (time series load, times){tuple}}
+        loc_load: {dic} Dictionary with load case name: time series load
+        loc_times: {dic} Dictionary with load case name: occurrence times.
 
     """
     sheet = open_workbook(file_loc).sheet_by_index(0)
-    loc_save = {}
-    if tf_filter:
-        for loc_key, loc_name in enumerate(sheet.col_values(1)[1:]):
-            if isinstance(sheet.col_values(7)[loc_key + 1], float):
-                loc_save[loc_name] = (
-                    around(
-                        signal_filter(
-                            loadtxt(r"%s.txt" % loc_name, skiprows=2)[:, -6:-1]
-                        ),
-                        ndigits,
-                    ),
-                    sheet.col_values(7)[loc_key + 1] * 3600 / 600 * 20,
-                )
-            else:
-                loc_save[loc_name] = (
-                    around(
-                        signal_filter(
-                            loadtxt(r"%s.txt" % loc_name, skiprows=2)[:, -6:-1]
-                        ),
-                        ndigits,
-                    ),
-                    sheet.col_values(3)[loc_key + 1],
-                )
-    else:
-        for loc_key, loc_name in enumerate(sheet.col_values(1)[1:]):
-            if isinstance(sheet.col_values(7)[loc_key + 1], float):
-                loc_save[loc_name] = (
-                    around(
-                        loadtxt(r"%s.txt" % loc_name, skiprows=2)[:, -6:-1], ndigits
-                    ),
-                    sheet.col_values(7)[loc_key + 1] * 3600 / 600 * 20,
-                )
-            else:
-                loc_save[loc_name] = (
-                    loadtxt(r"%s.txt" % loc_name, skiprows=2)[:, -6:-1],
-                    sheet.col_values(3)[loc_key + 1],
-                )
-    return loc_save
+    loc_load = {}
+    loc_times = {}
+
+    for loc_key, loc_name in enumerate(sheet.col_values(1)[1:]):
+        loc_load[loc_name.split("\\")[-1]] = loadtxt(r"%s.txt" % loc_name, skiprows=2)[
+            :, -6:-1
+        ]
+        loc_times[loc_name.split("\\")[-1]] = (
+            (sheet.col_values(7)[loc_key + 1] * 3600 / 600 * 20)
+            if isinstance(sheet.col_values(7)[loc_key + 1], float)
+            else sheet.col_values(3)[loc_key + 1]
+        )
+    return loc_load, loc_times
 
 
 def unit_read(file_loc, load_num):
@@ -255,54 +210,89 @@ def rainflow(series, left=True, right=True):
     return sorted(counts.items())
 
 
-def stress_combine(ts_load, unit_load, d_method="max_principle"):
+def stress_combine(
+    ts_load,
+    u_load,
+    d_method="max_principle",
+    filtering=True,
+    ndigits=2,
+    order=8,
+    cutoff=0.3,
+):
     """
         Stress combination according to the method used to calculate the fatigue damage.
+        Digital filtering of the time series stress history data (low pass).
+        Signal frequency fs<2Hz fow wind load.
+        Sampling frequency fm=20Hz for vensys, 50Hz for goldwind.
+        Cut off frequency fc=3Hz.
 
     Args:
         ts_load: time series load. KN-KNm
-        unit_load: unit load result. MPa-N
+        u_load: unit load result. MPa-N
         d_method: the method used to calculate the fatigue damage.
+        filtering: {bool} Load signal filtering. Detail parameters described in signal_filter function.
+        ndigits: {int} Number of decimal places to round to (default: 2)
+        order: {int} Order of signal filter.
+        cutoff: {float}  By default is 0.3 = 2*fc/fm for vensys.
 
     Returns:
-        time series stress.
+        Filtered and precision controlled time series stress history data.
 
     """
-    unit_load_file = unit_load.reshape([1, len(unit_load)])
     stress_c = {}
     stress_r = {}
 
     for key_load in ts_load:
-        loc_num = int(len(ts_load[key_load][0]))
-        stress_c[key_load.split('\\')[-1]] = empty([loc_num, 3])
-        # Expend the blade root load to three blade roots load.
+        loc_num = int(len(ts_load[key_load]))
+        stress_c[key_load] = empty([loc_num, 3])
+        ########################################################
+        # Expend the blade root load to three blade roots load.#
         load_cal = (
-            hstack((hstack((ts_load[key_load][0], ts_load[key_load][0])), ts_load[key_load][0]))
+            hstack((hstack((ts_load[key_load], ts_load[key_load])), ts_load[key_load]))
             * 1000
         )
-        key_load = key_load.split('\\')[-1]
-        for i_load in range(int(len(unit_load) / 3)):
-            stress_c[key_load] += dot(
-                load_cal[:, i_load].reshape([loc_num, 1]),
-                unit_load_file[0, 3 * i_load: 3 * i_load + 3].reshape(1, 3),
-            )
+        ########################################################
+        for i_load in range(3):
+            stress_c[key_load][:, i_load] = dot(load_cal, u_load[0 + i_load :: 3])
+
         if d_method == "max_principle":
             stress_r[key_load] = (
                 stress_c[key_load][:, 0] + stress_c[key_load][:, 1]
-            ).reshape([loc_num, 1]) / 2 + (
-                (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]).reshape(
-                    [loc_num, 1]
-                )
-                ** 2
-                / 4
-                + stress_c[key_load][:, 2].reshape([loc_num, 1]) ** 2
+            ) / 2 + (
+                (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]) ** 2 / 4
+                + stress_c[key_load][:, 2] ** 2
             ) ** (
                 1 / 2
             )
         else:
             # More function/fatigue damage accumulation hypothesis will be added in the future
             stress_r[key_load] = stress_c[key_load][:, 4].reshape([loc_num, 1])
-    return stress_r
+
+    b, a = butter(order, cutoff)
+    return (
+        [
+            around(filtfilt(b, a, stress_r[key_stress]), ndigits)
+            for key_stress in stress_r
+        ]
+        if filtering
+        else [around(stress_r[key_stress], ndigits) for key_stress in stress_r]
+    )
+
+
+def chunks(arr, m):
+    """
+    Divide a list to m parts.
+
+    Args:
+        arr: List to be divided
+        m: Number of parts (Number of multi-processing).
+
+    Returns:
+        {list} Divided list data.
+
+    """
+    n = round(len(arr) / (m - 1))
+    return [arr[id_node:id_node + n] for id_node in range(0, len(arr), n)]
 
 
 class FatigueFKM(object):
@@ -561,12 +551,52 @@ class FatigueFKM(object):
         return damage
 
 
+class MyThread(threading.Thread):
+
+    """
+    Multi-Processing
+    """
+
+    def __init__(self, mid, node_list):
+        threading.Thread.__init__(self)
+        self.mid = mid
+        self.node_list = node_list
+
+    def run(self):
+        # 把要执行的代码写到run函数里面 线程在创建后会直接运行run函数
+        print("Starting Threading-%s\n" % self.mid)
+
+        # count_node = 1
+        for node in self.node_list:
+            stress_h = {}
+            stress_h = stress_combine(
+                load_series, unit_load_result[node], filtering=True, ndigits=1
+            )
+            #     for key in stress_h:
+            #         markov = {}
+            #         markov = rainflow(stress_h[key].ravel())
+            #         for i in markov:
+            #             D_Details.loc[key, node] += (
+            #                 test.damage_s(i[0][0], i[0][1], i[1]) * load_times[key]
+            #             )
+            #
+            # if count_node % 10 == 0:
+            #     print(
+            #         "%s/%s node damage calculation finish. Time: %.2fs."
+            #         % (count_node, len(unit_load_result), (end - start))
+            #     )
+            # count_node += 1
+        # D_Sum = D_Details.apply(sum)
+        print("Exiting: Threading-%s\n" % self.mid)
+
+
 if __name__ == "__main__":
     import time
     from pandas import DataFrame
 
     # Fatigue damage calculation function
     test = FatigueFKM()
+    mul_threading = 10
 
     # read the unit load result
     start = time.time()
@@ -576,37 +606,32 @@ if __name__ == "__main__":
 
     # read time series load
     start = time.time()
-    load_all = loads_read(r"D:\Code\FatigueDamage\Data\times.xlsx")
+    load_series, load_times = loads_read(r"D:\Code\FatigueDamage\Data\times.xlsx")
     end = time.time()
     print("Reading time series load finish. Time: %.2fs." % (end - start))
 
     # time series stress combination, rainflow and fatigue damage calculation.
-    start = time.time()
-
-    # Dataframe to save the fatigue damage
-    print("Initialization of the fatigue damage dataframe……")
-    D_Details = DataFrame(
-        empty([len(load_all), len(unit_load_result)]),
-        columns=unit_load_result.keys(),
-        index=[loc_name.split("\\")[-1] for loc_name in list(load_all.keys())],
+    
+    
+    print(
+        "Start calculating for fatigue damage with %s-threading process......"
+        % mul_threading
     )
-    print("Start calculating for fatigue damage……")
-    count_node = 1
-    for node in list(unit_load_result.keys())[:1]:
-        stress_h = stress_combine(load_all, unit_load_result[node])
-        for key in stress_h:
-            markov = rainflow(stress_h[key].ravel())
-            for i in markov:
-                D_Details.loc[key, node] += (
-                    test.damage_s(i[0][0], i[0][1], i[1]) * locs_count[key]
-                )
-
-        if count_node % 10 == 0:
-            end = time.time()
-            print(
-                "%s/%s node damage calculation finish. Time: %.2fs."
-                % (count_node, len(unit_load_result), (end - start))
-            )
-            start = time.time()
-        count_node += 1
-    D_Sum = D_Details.apply(sum)
+    node_list = chunks(list(unit_load_result.keys())[:500], mul_threading)
+    start = time.time()
+    # Dataframe to save the fatigue damage
+    D_Details = DataFrame(
+        empty([len(load_series), len(unit_load_result)]),
+        columns=unit_load_result.keys(),
+        index=load_series.keys(),
+    )
+    
+    threads = {}    
+    for i in range(len(node_list)):
+        threads[i] = MyThread(i, node_list[i])
+    for i in range(len(node_list)):
+        threads[i].start()
+    for i in range(len(node_list)):
+        threads[i].join()
+    end = time.time()
+    print("Fatigue damage calculation finish. Time: %.2fs." % (end - start))
