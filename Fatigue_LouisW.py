@@ -8,10 +8,11 @@
 @Software: PyCharm
 """
 
-from numpy import empty, dot, array, hstack, delete, loadtxt, around
+from numpy import empty, dot, array, hstack, delete, loadtxt, around, concatenate
 from scipy.signal import butter, filtfilt
 from xlrd import open_workbook
 from collections import deque, defaultdict
+from numba import jit
 import functools
 import threading
 
@@ -43,6 +44,21 @@ def loads_read(file_loc):
             if isinstance(sheet.col_values(7)[loc_key + 1], float)
             else sheet.col_values(3)[loc_key + 1]
         )
+        ########################################################
+        # Expend the blade root load to three blade roots load.
+        # This part should modified according to actual conditions.
+        loc_load[loc_name.split("\\")[-1]] = (
+            concatenate(
+                (
+                    loc_load[loc_name.split("\\")[-1]],
+                    loc_load[loc_name.split("\\")[-1]],
+                    loc_load[loc_name.split("\\")[-1]],
+                ),
+                axis=1,
+            )
+            * 1000
+        )
+        ########################################################
     return loc_load, loc_times
 
 
@@ -245,29 +261,21 @@ def stress_combine(
     for key_load in ts_load:
         loc_num = int(len(ts_load[key_load]))
         stress_c[key_load] = empty([loc_num, 3])
-        ########################################################
-        # Expend the blade root load to three blade roots load.#
-        load_cal = (
-            hstack((hstack((ts_load[key_load], ts_load[key_load])), ts_load[key_load]))
-            * 1000
-        )
-        ########################################################
         for i_load in range(3):
-            stress_c[key_load][:, i_load] = dot(load_cal, u_load[0 + i_load :: 3])
+            stress_c[key_load][:, i_load] = dot(ts_load[key_load], u_load[0 + i_load:: 3])
 
-        if d_method == "max_principle":
-            stress_r[key_load] = (
-                stress_c[key_load][:, 0] + stress_c[key_load][:, 1]
-            ) / 2 + (
-                (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]) ** 2 / 4
-                + stress_c[key_load][:, 2] ** 2
-            ) ** (
-                1 / 2
-            )
-        else:
-            # More function/fatigue damage accumulation hypothesis will be added in the future
-            stress_r[key_load] = stress_c[key_load][:, 4].reshape([loc_num, 1])
-
+    if d_method == "max_principle":
+        stress_r[key_load] = (
+            stress_c[key_load][:, 0] + stress_c[key_load][:, 1]
+        ) / 2 + (
+            (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]) ** 2 / 4
+            + stress_c[key_load][:, 2] ** 2
+        ) ** (
+            1 / 2
+        )
+    else:
+        # More function/fatigue damage accumulation hypothesis will be added in the future
+        stress_r[key_load] = stress_c[key_load][:, 4].reshape([loc_num, 1])
     b, a = butter(order, cutoff)
     return (
         [
@@ -292,7 +300,7 @@ def chunks(arr, m):
 
     """
     n = round(len(arr) / (m - 1))
-    return [arr[id_node:id_node + n] for id_node in range(0, len(arr), n)]
+    return [arr[id_node : id_node + n] for id_node in range(0, len(arr), n)]
 
 
 class FatigueFKM(object):
@@ -557,10 +565,10 @@ class MyThread(threading.Thread):
     Multi-Processing
     """
 
-    def __init__(self, mid, node_list):
+    def __init__(self, mid, nodelist):
         threading.Thread.__init__(self)
         self.mid = mid
-        self.node_list = node_list
+        self.node_list = nodelist
 
     def run(self):
         # 把要执行的代码写到run函数里面 线程在创建后会直接运行run函数
@@ -570,7 +578,7 @@ class MyThread(threading.Thread):
         for node in self.node_list:
             stress_h = {}
             stress_h = stress_combine(
-                load_series, unit_load_result[node], filtering=True, ndigits=1
+                load_series, unit_load_result[node], filtering=True, ndigits=2
             )
             #     for key in stress_h:
             #         markov = {}
@@ -596,7 +604,7 @@ if __name__ == "__main__":
 
     # Fatigue damage calculation function
     test = FatigueFKM()
-    mul_threading = 10
+    mul_threading = 8
 
     # read the unit load result
     start = time.time()
@@ -611,13 +619,11 @@ if __name__ == "__main__":
     print("Reading time series load finish. Time: %.2fs." % (end - start))
 
     # time series stress combination, rainflow and fatigue damage calculation.
-    
-    
     print(
         "Start calculating for fatigue damage with %s-threading process......"
         % mul_threading
     )
-    node_list = chunks(list(unit_load_result.keys())[:500], mul_threading)
+    node_list = chunks(list(unit_load_result.keys())[:100], mul_threading)
     start = time.time()
     # Dataframe to save the fatigue damage
     D_Details = DataFrame(
@@ -625,8 +631,8 @@ if __name__ == "__main__":
         columns=unit_load_result.keys(),
         index=load_series.keys(),
     )
-    
-    threads = {}    
+
+    threads = {}
     for i in range(len(node_list)):
         threads[i] = MyThread(i, node_list[i])
     for i in range(len(node_list)):
