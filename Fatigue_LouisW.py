@@ -9,28 +9,25 @@
 """
 
 from numpy import empty, dot, array, hstack, delete, loadtxt, around, concatenate
-from scipy.signal import butter, filtfilt
 from xlrd import open_workbook
 from collections import deque, defaultdict
-from numba import jit
 import functools
-import threading
 
 
 def loads_read(file_loc):
     """
-    Reading the time series loads.
-    This function in only support for the vensys load file type now. Support for goldwind load file type will added in
-    the future.
+	Reading the time series loads.
+	This function in only support for the vensys load file type now. Support for goldwind load file type will added in
+	the future.
 
-    Args:
-        file_loc: {str} File location of the load case occurrences numbers. xlsx file.
+	Args:
+		file_loc: {str} File location of the load case occurrences numbers. xlsx file.
 
-    Returns:
-        loc_load: {dic} Dictionary with load case name: time series load
-        loc_times: {dic} Dictionary with load case name: occurrence times.
+	Returns:
+		loc_load: {dic} Dictionary with load case name: time series load
+		loc_times: {dic} Dictionary with load case name: occurrence times.
 
-    """
+	"""
     sheet = open_workbook(file_loc).sheet_by_index(0)
     loc_load = {}
     loc_times = {}
@@ -64,16 +61,16 @@ def loads_read(file_loc):
 
 def unit_read(file_loc, load_num):
     """
-        Read the unit load result and combined into a array. Only vensys file type supported now.
+		Read the unit load result and combined into a array. Only vensys file type supported now.
 
-    Args:
-        file_loc: unit load file location.
-        load_num: number of the unit load result files
+	Args:
+		file_loc: unit load file location.
+		load_num: number of the unit load result files
 
-    Returns:
-        ele_nd: {array} node number and stress component under unit load. /Nm-MPa
+	Returns:
+		ele_nd: {array} node number and stress component under unit load. /Nm-MPa
 
-    """
+	"""
     ele_nd = []
     unit_load = {}
     for loadi in range(load_num):
@@ -102,26 +99,75 @@ def unit_read(file_loc, load_num):
     return unit_load
 
 
+def _get_stress_function(d_method):
+    """
+	Stress calculation function definition.
+
+	Args:
+		d_method: Method for stress calculation.
+
+	Returns:
+	Function for stress calculation.
+    """
+    if d_method == "max_principle":
+
+        def func(x):
+            return (x[:, 0] + x[:, 1]) / 2 + (
+                (x[:, 0] - x[:, 1]) ** 2 / 4 + x[:, 2] ** 2
+            ) ** (1 / 2)
+
+    else:
+        # Just return My
+        def func(x):
+            return x[:4]
+
+    return func
+
+
+def stress_combine(ts_load, u_load, d_method="max_principle"):
+    """
+	Stress combination according to the method used to calculate the fatigue damage.
+	Digital filtering of the time series stress history data (low pass).
+	Signal frequency fs<2Hz fow wind load.
+	Sampling frequency fm=20Hz for vensys, 50Hz for goldwind.
+	Cut off frequency fc=3Hz.
+
+	Args:
+		ts_load: time series load of specific load case. KN-KNm
+		u_load: unit load result of specific node. MPa-N
+		d_method: the stress combination method used to calculate the fatigue damage.
+
+	Returns:
+		Time series stress history data.
+
+	"""
+    func = _get_stress_function(d_method)
+    stress_c = empty([len(ts_load), 3])
+    for i_load in range(3):
+        stress_c[:, i_load] = dot(ts_load, u_load[0 + i_load :: 3])
+    return func(stress_c)
+
+
 def reversals(series, left=False, right=False):
     """
-    Iterate reversal points in the series.
-    A reversal point is a point in the series at which the first derivative
-    changes sign. Reversal is undefined at the first (last) point because the
-    derivative before (after) this point is undefined. The first and the last
-    points may be treated as reversals by setting the optional parameters
-    `left` and `right` to True.
-    Parameters
-    ----------
-    series : iterable sequence of numbers
-    left: bool, optional
-        If True, yield the first point in the series (treat it as a reversal).
-    right: bool, optional
-        If True, yield the last point in the series (treat it as a reversal).
-    Yields
-    ------
-    float
-        Reversal points.
-    """
+	Iterate reversal points in the series.
+	A reversal point is a point in the series at which the first derivative
+	changes sign. Reversal is undefined at the first (last) point because the
+	derivative before (after) this point is undefined. The first and the last
+	points may be treated as reversals by setting the optional parameters
+	`left` and `right` to True.
+	Parameters
+	----------
+	series : iterable sequence of numbers
+	left: bool, optional
+		If True, yield the first point in the series (treat it as a reversal).
+	right: bool, optional
+		If True, yield the last point in the series (treat it as a reversal).
+	Yields
+	------
+	float
+		Reversal points.
+	"""
     series = iter(series)
 
     x_last, x = next(series), next(series)
@@ -158,20 +204,20 @@ def _sort_lows_and_highs(func):
 @_sort_lows_and_highs
 def extract_cycles(series, left=False, right=False):
     """Iterate cycles in the series.
-    Parameters
-    ----------
-    series : iterable sequence of numbers
-    left: bool, optional
-        If True, treat the first point in the series as a reversal.
-    right: bool, optional
-        If True, treat the last point in the series as a reversal.
-    Yields
-    ------
-    cycle : tuple
-        Each tuple contains three floats (low, high, times), where low and high
-        define cycle amplitude and times equals to 1.0 for full cycles and 0.5
-        for half cycles.
-    """
+	Parameters
+	----------
+	series : iterable sequence of numbers
+	left: bool, optional
+		If True, treat the first point in the series as a reversal.
+	right: bool, optional
+		If True, treat the last point in the series as a reversal.
+	Yields
+	------
+	cycle : tuple
+		Each tuple contains three floats (low, high, times), where low and high
+		define cycle amplitude and times equals to 1.0 for full cycles and 0.5
+		for half cycles.
+	"""
     points = deque()
 
     for x in reversals(series, left=left, right=right):
@@ -203,104 +249,62 @@ def extract_cycles(series, left=False, right=False):
             points.popleft()
 
 
-def rainflow(series, left=True, right=True):
+def _get_round_function(ndigits=None):
+    """ Round cycle magnitudes to the given number of digits before counting"""
+    if ndigits is None:
+
+        def func(x):
+            return x
+
+    else:
+
+        def func(x):
+            return round(x, ndigits)
+
+    return func
+
+
+def rainflow(series, ndigits=None, left=True, right=True):
     """Count cycles in the series.
-        Parameters
-        ----------
-            series : iterable sequence of numbers
-            left: bool, optional
-                If True, treat the first point in the series as a reversal.
-            right: bool, optional
-                If True, treat the last point in the series as a reversal.
-        Returns
-        -------
-            A sorted list containing pairs of cycle magnitude, mean and count.
-            One-half cycles are counted as 0.5, so the returned counts may not be
-            whole numbers.
-        """
+		Parameters
+		----------
+			series : iterable sequence of numbers
+			ndigits: Round cycle magnitudes to the given number of digits before counting
+			left: bool, optional
+				If True, treat the first point in the series as a reversal.
+			right: bool, optional
+				If True, treat the last point in the series as a reversal.
+		Returns
+		-------
+			A sorted list containing pairs of cycle magnitude, mean and count.
+			One-half cycles are counted as 0.5, so the returned counts may not be
+			whole numbers.
+		"""
     counts = defaultdict(float)
+    round_ = _get_round_function(ndigits)
     for low, high, times in extract_cycles(series, left=left, right=right):
-        delta = abs(high - low) / 2
-        mean = (high - low) / 2
+        delta = round_(abs(high - low) / 2)
+        mean = round_((high - low) / 2)
         counts[(delta, mean)] += times
     return sorted(counts.items())
 
 
-def stress_combine(
-    ts_load,
-    u_load,
-    d_method="max_principle",
-    filtering=True,
-    ndigits=2,
-    order=8,
-    cutoff=0.3,
-):
+def muti_id(n_start, n_end, m):
     """
-        Stress combination according to the method used to calculate the fatigue damage.
-        Digital filtering of the time series stress history data (low pass).
-        Signal frequency fs<2Hz fow wind load.
-        Sampling frequency fm=20Hz for vensys, 50Hz for goldwind.
-        Cut off frequency fc=3Hz.
+	Multi-processing list creat
 
-    Args:
-        ts_load: time series load. KN-KNm
-        u_load: unit load result. MPa-N
-        d_method: the method used to calculate the fatigue damage.
-        filtering: {bool} Load signal filtering. Detail parameters described in signal_filter function.
-        ndigits: {int} Number of decimal places to round to (default: 2)
-        order: {int} Order of signal filter.
-        cutoff: {float}  By default is 0.3 = 2*fc/fm for vensys.
+	Args:
+		n_start: Start node of the fatigue calculation
+		n_end: End node of the fatigue calculation
+		m: Number of multi-processing).
 
-    Returns:
-        Filtered and precision controlled time series stress history data.
+	Returns:
+		Node id list.
 
-    """
-    stress_c = {}
-    stress_r = {}
-
-    for key_load in ts_load:
-        loc_num = int(len(ts_load[key_load]))
-        stress_c[key_load] = empty([loc_num, 3])
-        for i_load in range(3):
-            stress_c[key_load][:, i_load] = dot(ts_load[key_load], u_load[0 + i_load:: 3])
-
-    if d_method == "max_principle":
-        stress_r[key_load] = (
-            stress_c[key_load][:, 0] + stress_c[key_load][:, 1]
-        ) / 2 + (
-            (stress_c[key_load][:, 0] - stress_c[key_load][:, 1]) ** 2 / 4
-            + stress_c[key_load][:, 2] ** 2
-        ) ** (
-            1 / 2
-        )
-    else:
-        # More function/fatigue damage accumulation hypothesis will be added in the future
-        stress_r[key_load] = stress_c[key_load][:, 4].reshape([loc_num, 1])
-    b, a = butter(order, cutoff)
-    return (
-        [
-            around(filtfilt(b, a, stress_r[key_stress]), ndigits)
-            for key_stress in stress_r
-        ]
-        if filtering
-        else [around(stress_r[key_stress], ndigits) for key_stress in stress_r]
-    )
-
-
-def chunks(arr, m):
-    """
-    Divide a list to m parts.
-
-    Args:
-        arr: List to be divided
-        m: Number of parts (Number of multi-processing).
-
-    Returns:
-        {list} Divided list data.
-
-    """
-    n = round(len(arr) / (m - 1))
-    return [arr[id_node : id_node + n] for id_node in range(0, len(arr), n)]
+	"""
+    n = round((n_end - n_start) / m)
+    nd = [i * n + n_start for i in list(range(m))]
+    return nd + [n_end + 1]
 
 
 class FatigueFKM(object):
@@ -526,104 +530,68 @@ class FatigueFKM(object):
         if not ms_correction:
             return 1
         if self.h2x <= mean_stress <= self.h3x:
-            sigma_d_m = self.sigma_D - self.M * mean_stress
+            return (self.sigma_D - self.M * mean_stress) / self.sigma_D
         elif self.h1x <= mean_stress < self.h2x:
-            sigma_d_m = self.sigma_D - self.M * self.sigma_D / (self.M - 1)
+            return (self.sigma_D - self.M * self.sigma_D / (self.M - 1)) / self.sigma_D
         elif mean_stress < self.h1x:
-            sigma_d_m = mean_stress + self.Rp / self.gamma_M
+            return (mean_stress + self.Rp / self.gamma_M) / self.sigma_D
         else:
-            sigma_d_m = self.Rp / self.gamma_M - (
-                self.Rp / self.gamma_M - self.sigma_D
-            ) / (1 - self.M)
-        return sigma_d_m / self.sigma_D
+            return (
+                self.Rp / self.gamma_M
+                - (self.Rp / self.gamma_M - self.sigma_D) / (1 - self.M)
+            ) / self.sigma_D
 
-    def damage_s(self, amplitude, mean, count, ms_correction=True):
+    def damage_s(self, markov, ms_correction=True):
         """
 			Damage accumulation
 		Args:
-			amplitude:
-			mean:
-			count:
-			ms_correction:
+			markov: markov matrix. ([Amplitude, Mean}, Counts)
+			ms_correction: Mean stress correction.
 
 		Returns:
 			Damage
 		"""
-        if amplitude == 0:
-            return 0
-        sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
-        if mean <= sigma_d:
-            damage = count / (self.N_D * (sigma_d / amplitude) ** self.m2)
-        else:
-            damage = count / (self.N_D * (sigma_d / amplitude) ** self.m1)
-        return damage
-
-
-class MyThread(threading.Thread):
-
-    """
-    Multi-Processing
-    """
-
-    def __init__(self, mid, nodelist):
-        threading.Thread.__init__(self)
-        self.mid = mid
-        self.node_list = nodelist
-
-    def run(self):
-        # 把要执行的代码写到run函数里面 线程在创建后会直接运行run函数
-        print("Starting Threading-%s\n" % self.mid)
-
-        # count_node = 1
-        for node in self.node_list:
-            stress_h = {}
-            stress_h = stress_combine(
-                load_series, unit_load_result[node], filtering=True, ndigits=2
-            )
-            #     for key in stress_h:
-            #         markov = {}
-            #         markov = rainflow(stress_h[key].ravel())
-            #         for i in markov:
-            #             D_Details.loc[key, node] += (
-            #                 test.damage_s(i[0][0], i[0][1], i[1]) * load_times[key]
-            #             )
-            #
-            # if count_node % 10 == 0:
-            #     print(
-            #         "%s/%s node damage calculation finish. Time: %.2fs."
-            #         % (count_node, len(unit_load_result), (end - start))
-            #     )
-            # count_node += 1
-        # D_Sum = D_Details.apply(sum)
-        print("Exiting: Threading-%s\n" % self.mid)
+        it = iter(markov)
+        d = 0
+        for i in it:
+            amplitude = i[0][0]
+            mean = i[0][1]
+            count = i[1]
+            if not amplitude == 0:
+                sigma_d = self.sigma_D * self.factor_ms(mean, ms_correction)
+                if mean <= sigma_d:
+                    d += count / (self.N_D * (sigma_d / amplitude) ** self.m2)
+                else:
+                    d += count / (self.N_D * (sigma_d / amplitude) ** self.m1)
+        return d
 
 
 if __name__ == "__main__":
     import time
     from pandas import DataFrame
+    from itertools import product
 
     # Fatigue damage calculation function
     test = FatigueFKM()
-    mul_threading = 8
+    node_start = 0
+    node_end = 100
+    loc_start = 0
+    loc_end = 135
 
     # read the unit load result
     start = time.time()
     unit_load_result = unit_read(r"D:\Code\FatigueDamage\Factor", 15)
     end = time.time()
-    print("Reading unit load result finish. Time: %.2fs." % (end - start))
+    print("Reading unit load result finish. Time: %.2fs.\n" % (end - start))
 
     # read time series load
     start = time.time()
     load_series, load_times = loads_read(r"D:\Code\FatigueDamage\Data\times.xlsx")
     end = time.time()
-    print("Reading time series load finish. Time: %.2fs." % (end - start))
+    print("Reading time series load finish. Time: %.2fs.\n" % (end - start))
 
     # time series stress combination, rainflow and fatigue damage calculation.
-    print(
-        "Start calculating for fatigue damage with %s-threading process......"
-        % mul_threading
-    )
-    node_list = chunks(list(unit_load_result.keys())[:100], mul_threading)
+    print("Start calculating of fatigue damage......\n")
     start = time.time()
     # Dataframe to save the fatigue damage
     D_Details = DataFrame(
@@ -631,13 +599,23 @@ if __name__ == "__main__":
         columns=unit_load_result.keys(),
         index=load_series.keys(),
     )
+    # List of the node and load case to be calculated.
+    node_list = list(unit_load_result.keys())[node_start:node_end]
+    loc_list = list(load_series.keys())[loc_start:loc_end]
 
-    threads = {}
-    for i in range(len(node_list)):
-        threads[i] = MyThread(i, node_list[i])
-    for i in range(len(node_list)):
-        threads[i].start()
-    for i in range(len(node_list)):
-        threads[i].join()
+    # Loop for fatigue damage calculation
+    for node, loc in product(node_list, loc_list):
+        stress_h = stress_combine(load_series[loc], unit_load_result[node])
+        D_Details.loc[loc, node] = test.damage_s(rainflow(stress_h,ndigits=3))
+        #
+        # if count_node % 10 == 0:
+        #     print(
+        #         "%s/%s node damage calculation finish. Time: %.2fs."
+        #         % (count_node, len(unit_load_result), (end - start))
+        #     )
+        # count_node += 1
+    # D_Sum = D_Details.apply(sum)
     end = time.time()
-    print("Fatigue damage calculation finish. Time: %.2fs." % (end - start))
+    print("Fatigue damage calculation finish. Time: %.2fs.\n" % (end - start))
+    D_Sum = D_Details.apply(sum)
+
