@@ -8,17 +8,17 @@
 @Software: PyCharm
 """
 
-from numpy import empty, dot, array, hstack, delete, loadtxt, around, concatenate
+from numpy import empty, dot, hstack, delete, loadtxt
 from xlrd import open_workbook
 from collections import deque, defaultdict
-import functools
+from numba import jit
+from numpy import array, roll, concatenate, argmax, abs
 
 
 def loads_read(file_loc):
     """
 	Reading the time series loads.
-	This function in only support for the vensys load file type now. Support for goldwind load file type will added in
-	the future.
+	The parameters of this function should modified according to real question now. This will fixed in the future.
 
 	Args:
 		file_loc: {str} File location of the load case occurrences numbers. xlsx file.
@@ -31,31 +31,17 @@ def loads_read(file_loc):
     sheet = open_workbook(file_loc).sheet_by_index(0)
     loc_load = {}
     loc_times = {}
-
+    # For fixed hun center load, take the [:,1:7] of the data from txt file.
     for loc_key, loc_name in enumerate(sheet.col_values(1)[1:]):
-        loc_load[loc_name.split("\\")[-1]] = loadtxt(r"%s.txt" % loc_name, skiprows=2)[
-            :, -6:-1
-        ]
+        loc_load[loc_name.split("\\")[-1]] = (
+            loadtxt(r"%s.txt" % loc_name, skiprows=2)[:, 1:-2] * 1000
+        )
         loc_times[loc_name.split("\\")[-1]] = (
             (sheet.col_values(7)[loc_key + 1] * 3600 / 600 * 20)
             if isinstance(sheet.col_values(7)[loc_key + 1], float)
             else sheet.col_values(3)[loc_key + 1]
         )
-        ########################################################
-        # Expend the blade root load to three blade roots load.
-        # This part should modified according to actual conditions.
-        loc_load[loc_name.split("\\")[-1]] = (
-            concatenate(
-                (
-                    loc_load[loc_name.split("\\")[-1]],
-                    loc_load[loc_name.split("\\")[-1]],
-                    loc_load[loc_name.split("\\")[-1]],
-                ),
-                axis=1,
-            )
-            * 1000
-        )
-        ########################################################
+
     return loc_load, loc_times
 
 
@@ -64,17 +50,17 @@ def unit_read(file_loc, load_num):
 		Read the unit load result and combined into a array. Only vensys file type supported now.
 
 	Args:
-		file_loc: unit load file location.
-		load_num: number of the unit load result files
+		file_loc: Unit load file location.
+		load_num: Number of the unit load result files
 
 	Returns:
-		ele_nd: {array} node number and stress component under unit load. /Nm-MPa
+		Stress components of each node under unit load. /Nm-MPa
 
 	"""
-    ele_nd = []
+    ele_nd = deque()
     unit_load = {}
     for loadi in range(load_num):
-        ele_s = []
+        ele_s = deque()
         with open(r"%s/Sxyz_LF_%s.txt" % (file_loc, loadi + 1)) as f:
             line = f.readline()
             while line:
@@ -101,13 +87,14 @@ def unit_read(file_loc, load_num):
 
 def _get_stress_function(d_method):
     """
-	Stress calculation function definition.
+	Stress combination function.
 
 	Args:
-		d_method: Method for stress calculation.
+		d_method: Method for stress calculation. max_principle, mises, max_shear, critical_plane
 
 	Returns:
 	Function for stress calculation.
+
     """
     if d_method == "max_principle":
 
@@ -127,10 +114,6 @@ def _get_stress_function(d_method):
 def stress_combine(ts_load, u_load, d_method="max_principle"):
     """
 	Stress combination according to the method used to calculate the fatigue damage.
-	Digital filtering of the time series stress history data (low pass).
-	Signal frequency fs<2Hz fow wind load.
-	Sampling frequency fm=20Hz for vensys, 50Hz for goldwind.
-	Cut off frequency fc=3Hz.
 
 	Args:
 		ts_load: time series load of specific load case. KN-KNm
@@ -138,89 +121,64 @@ def stress_combine(ts_load, u_load, d_method="max_principle"):
 		d_method: the stress combination method used to calculate the fatigue damage.
 
 	Returns:
-		Time series stress history data.
+		Time series stress data.
 
 	"""
     func = _get_stress_function(d_method)
     stress_c = empty([len(ts_load), 3])
+    #
     for i_load in range(3):
-        stress_c[:, i_load] = dot(ts_load, u_load[0 + i_load :: 3])
+        stress_c[:, i_load] = dot(ts_load, u_load[0 + i_load:: 3])
     return func(stress_c)
 
 
-def reversals(series, left=False, right=False):
+def _get_peaks(series):
     """
-	Iterate reversal points in the series.
-	A reversal point is a point in the series at which the first derivative
-	changes sign. Reversal is undefined at the first (last) point because the
-	derivative before (after) this point is undefined. The first and the last
-	points may be treated as reversals by setting the optional parameters
-	`left` and `right` to True.
-	Parameters
-	----------
-	series : iterable sequence of numbers
-	left: bool, optional
-		If True, yield the first point in the series (treat it as a reversal).
-	right: bool, optional
-		If True, yield the last point in the series (treat it as a reversal).
-	Yields
-	------
-	float
-		Reversal points.
-	"""
-    series = iter(series)
+    Return peaks & troughs of data, starting & finishing at the maximum
 
-    x_last, x = next(series), next(series)
-    d_last = x - x_last
+    Args:
+        series: Initial time series data
 
-    if left:
-        yield x_last
-    for x_next in series:
-        if x_next == x:
-            continue
-        d_next = x_next - x
-        if d_last * d_next < 0:
-            yield x
-        x_last, x = x, x_next
-        d_last = d_next
-    if right:
-        yield x_next
+    Returns:
+        Spliced time series data started and end with the maximum value
+
+    """
+    # Eliminate repeated data points:
+    series = series[series != roll(series, 1)]
+
+    if len(series) == 0:
+        return []
+
+    # Split and rejoin at largest abs value
+    max_idx = argmax(abs(series))
+    series = concatenate((series[max_idx:], series[:max_idx]))
+
+    # Find peaks and troughs
+    prv = roll(series, -1)
+    nxt = roll(series, 1)
+
+    isPeak = ((series > prv) & (series > nxt)) | ((series < prv) & (series < nxt))
+
+    # Close off the signal with the max (ie first) value, as required.
+    return concatenate((series[isPeak], series[:1]))
 
 
-def _sort_lows_and_highs(func):
-    """Decorator for extract_cycles"""
+def extract_cycles(series):
+    """
+    Iterate cycles in the series.
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        for low, high, times in func(*args, **kwargs):
-            if low < high:
-                yield low, high, times
-            else:
-                yield high, low, times
+    Args:
+        series: Iterable sequence of numbers
 
-    return wrapper
-
-
-@_sort_lows_and_highs
-def extract_cycles(series, left=False, right=False):
-    """Iterate cycles in the series.
-	Parameters
-	----------
-	series : iterable sequence of numbers
-	left: bool, optional
-		If True, treat the first point in the series as a reversal.
-	right: bool, optional
-		If True, treat the last point in the series as a reversal.
-	Yields
-	------
-	cycle : tuple
+    Returns:
+        tuple
 		Each tuple contains three floats (low, high, times), where low and high
 		define cycle amplitude and times equals to 1.0 for full cycles and 0.5
 		for half cycles.
-	"""
-    points = deque()
 
-    for x in reversals(series, left=left, right=right):
+    """
+    points = deque()
+    for x in _get_peaks(series):
         points.append(x)
         while len(points) >= 3:
             # Form ranges X and Y from the three most recent points
@@ -238,10 +196,9 @@ def extract_cycles(series, left=False, right=False):
             else:
                 # Count Y as one cycle and discard the peak and the valley of Y
                 yield points[-3], points[-2], 1.0
-                last = points.pop()
+                points[-3] = points[-1]
                 points.pop()
                 points.pop()
-                points.append(last)
     else:
         # Count the remaining ranges as one-half cycles
         while len(points) > 1:
@@ -249,62 +206,33 @@ def extract_cycles(series, left=False, right=False):
             points.popleft()
 
 
-def _get_round_function(ndigits=None):
-    """ Round cycle magnitudes to the given number of digits before counting"""
-    if ndigits is None:
-
-        def func(x):
-            return x
-
-    else:
-
-        def func(x):
-            return round(x, ndigits)
-
-    return func
+@jit(nopython=True)
+def _round(x, ndigits=2):
+    """Round cycle magnitudes to the given number of digits before counting"""
+    return array([round(i, ndigits) for i in x])
 
 
-def rainflow(series, ndigits=None, left=True, right=True):
-    """Count cycles in the series.
-		Parameters
-		----------
-			series : iterable sequence of numbers
-			ndigits: Round cycle magnitudes to the given number of digits before counting
-			left: bool, optional
-				If True, treat the first point in the series as a reversal.
-			right: bool, optional
-				If True, treat the last point in the series as a reversal.
-		Returns
-		-------
-			A sorted list containing pairs of cycle magnitude, mean and count.
-			One-half cycles are counted as 0.5, so the returned counts may not be
-			whole numbers.
-		"""
-    counts = defaultdict(float)
-    round_ = _get_round_function(ndigits)
-    for low, high, times in extract_cycles(series, left=left, right=right):
-        delta = round_(abs(high - low) / 2)
-        mean = round_((high - low) / 2)
-        counts[(delta, mean)] += times
-    return sorted(counts.items())
-
-
-def muti_id(n_start, n_end, m):
+def rainflow(series, ndigits=2):
     """
-	Multi-processing list creat
+    Count cycles in the series.
+    Args:
+        series: Iterable sequence of numbers
+        ndigits: Round cycle magnitudes to the given number of digits before counting
 
-	Args:
-		n_start: Start node of the fatigue calculation
-		n_end: End node of the fatigue calculation
-		m: Number of multi-processing).
+    Returns:
+        A sorted list containing pairs of cycle magnitude, mean and count.
+        One-half cycles are counted as 0.5, so the returned counts may not be whole numbers.
 
-	Returns:
-		Node id list.
+    """
+    # Round cycle magnitudes to the given number of digits before counting
+    series = _round(series, ndigits)
+    counts = defaultdict(float)
 
-	"""
-    n = round((n_end - n_start) / m)
-    nd = [i * n + n_start for i in list(range(m))]
-    return nd + [n_end + 1]
+    for low, high, times in extract_cycles(series):
+        amplitude = abs(high - low) / 2
+        mean = (high - low) / 2
+        counts[(amplitude, mean)] += times
+    return sorted(counts.items())
 
 
 class FatigueFKM(object):
@@ -541,7 +469,7 @@ class FatigueFKM(object):
                 - (self.Rp / self.gamma_M - self.sigma_D) / (1 - self.M)
             ) / self.sigma_D
 
-    def damage_s(self, markov, ms_correction=True):
+    def damage_node(self, markov, ms_correction=True):
         """
 			Damage accumulation
 		Args:
@@ -551,9 +479,9 @@ class FatigueFKM(object):
 		Returns:
 			Damage
 		"""
-        it = iter(markov)
+
         d = 0
-        for i in it:
+        for i in iter(markov):
             amplitude = i[0][0]
             mean = i[0][1]
             count = i[1]
@@ -565,6 +493,45 @@ class FatigueFKM(object):
                     d += count / (self.N_D * (sigma_d / amplitude) ** self.m1)
         return d
 
+    def damage_cast(self, load_series, load_times, unit_load_result, node_list="all", ndigits=2):
+        """
+        Fatigue damage calculation for cast component.
+        Args:
+            load_series: Time series load, the format corresponds to the unit load stress result
+            load_times: Times for time series load.
+            unit_load_result: Stress results under unit load. This file is calculated
+            node_list: Node list to be calculated of fatigue damage.
+            ndigits: Round cycle magnitudes to the given number of digits before counting
+
+        Returns:
+
+        """
+        # Dataframe to save the fatigue damage
+        D_Details = DataFrame(
+            empty([len(load_series), len(unit_load_result)]),
+            columns=unit_load_result.keys(),
+            index=load_series.keys(),
+        )
+        # List of the node and load case to be calculated.
+        if node_list == "all":
+            node_list = list(unit_load_result.keys())
+        else:
+            node_list = list(unit_load_result.keys())[node_list[0]: node_list[1]]
+        loc_list = list(load_series.keys())
+        d_max = [0, 0]
+        # Loop for fatigue damage calculation
+        for node, loc in product(node_list, loc_list):
+            stress_h = stress_combine(load_series[loc], unit_load_result[node])
+            D_Details.loc[loc, node] = self.damage_node(rainflow(stress_h, ndigits))*load_times[loc]
+            if D_Details[node].sum() > d_max[1]:
+                d_max = [node, D_Details[node].sum()]
+            if node % 100 == 0:
+                print(
+                    "The maximum fatigue damage is %s for node %s"
+                    % (d_max[0], d_max[1])
+                )
+        return D_Details
+
 
 if __name__ == "__main__":
     import time
@@ -573,49 +540,25 @@ if __name__ == "__main__":
 
     # Fatigue damage calculation function
     test = FatigueFKM()
-    node_start = 0
-    node_end = 100
-    loc_start = 0
-    loc_end = 135
 
     # read the unit load result
     start = time.time()
-    unit_load_result = unit_read(r"D:\Code\FatigueDamage\Factor", 15)
+    unit_result = unit_read(
+        r"D:\Code\FatigueDamage\Project\3P5_Axle\Unit_Load_Results", 6
+    )
     end = time.time()
     print("Reading unit load result finish. Time: %.2fs.\n" % (end - start))
 
     # read time series load
     start = time.time()
-    load_series, load_times = loads_read(r"D:\Code\FatigueDamage\Data\times.xlsx")
+    load, times = loads_read(r"D:\Code\FatigueDamage\Data\times.xlsx")
     end = time.time()
     print("Reading time series load finish. Time: %.2fs.\n" % (end - start))
 
     # time series stress combination, rainflow and fatigue damage calculation.
     print("Start calculating of fatigue damage......\n")
     start = time.time()
-    # Dataframe to save the fatigue damage
-    D_Details = DataFrame(
-        empty([len(load_series), len(unit_load_result)]),
-        columns=unit_load_result.keys(),
-        index=load_series.keys(),
-    )
-    # List of the node and load case to be calculated.
-    node_list = list(unit_load_result.keys())[node_start:node_end]
-    loc_list = list(load_series.keys())[loc_start:loc_end]
-
-    # Loop for fatigue damage calculation
-    for node, loc in product(node_list, loc_list):
-        stress_h = stress_combine(load_series[loc], unit_load_result[node])
-        D_Details.loc[loc, node] = test.damage_s(rainflow(stress_h,ndigits=3))
-        #
-        # if count_node % 10 == 0:
-        #     print(
-        #         "%s/%s node damage calculation finish. Time: %.2fs."
-        #         % (count_node, len(unit_load_result), (end - start))
-        #     )
-        # count_node += 1
-    # D_Sum = D_Details.apply(sum)
+    D = test.damage_cast(load, times, unit_result, [0, 100], 1)
     end = time.time()
     print("Fatigue damage calculation finish. Time: %.2fs.\n" % (end - start))
-    D_Sum = D_Details.apply(sum)
-
+    D_Sum = D.apply(sum)
